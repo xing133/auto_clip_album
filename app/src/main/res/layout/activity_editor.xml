@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/black"
+    tools:context=".ui.editor.EditorActivity">
+
+    <!-- ViewPager for image swiping -->
+    <androidx.viewpager2.widget.ViewPager2
+        android:id="@+id/viewPager"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        app:layout_constraintBottom_toTopOf="@id/controlsContainer"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <!-- Loading indicator -->
+    <com.google.android.material.progressindicator.CircularProgressIndicator
+        android:id="@+id/progressBar"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:indeterminate="true"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        tools:visibility="visible" />
+
+    <!-- Status text -->
+    <TextView
+        android:id="@+id/statusText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:background="@color/overlay_background"
+        android:padding="12dp"
+        android:textAppearance="?attr/textAppearanceBodyMedium"
+        android:textColor="@color/white"
+        android:visibility="gone"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        tools:text="Detecting pose…"
+        tools:visibility="visible" />
+
+    <!-- Bottom controls -->
+    <LinearLayout
+        android:id="@+id/controlsContainer"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:background="@color/overlay_background"
+        android:orientation="vertical"
+        android:padding="16dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent">
+
+        <!-- Save option dropdown -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_vertical"
+                android:layout_weight="1"
+                android:text="@string/save_option"
+                android:textAppearance="?attr/textAppearanceBodyMedium"
+                android:textColor="@color/white" />
+
+            <com.google.android.material.button.MaterialButtonToggleGroup
+                android:id="@+id/saveOptionGroup"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                app:checkedButton="@id/btnSaveNew"
+                app:selectionRequired="true"
+                app:singleSelection="true">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnOverwrite"
+                    style="?attr/materialButtonOutlinedStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/overwrite_original"
+                    android:textSize="12sp"
+                    app:cornerRadius="8dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnSaveNew"
+                    style="?attr/materialButtonOutlinedStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/save_as_new"
+                    android:textSize="12sp"
+                    app:cornerRadius="8dp" />
+
+            </com.google.android.material.button.MaterialButtonToggleGroup>
+
+        </LinearLayout>
+
+        <!-- Action buttons -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnCancel"
+                style="?attr/materialButtonOutlinedStyle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="8dp"
+                android:layout_weight="1"
+                android:text="@string/cancel"
+                android:textColor="@color/white"
+                app:cornerRadius="8dp"
+                app:strokeColor="@color/white" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnCrop"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:text="@string/crop"
+                app:cornerRadius="8dp" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

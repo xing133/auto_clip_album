@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Material Design 3 Dark Theme Colors -->
+    <!-- Primary Colors - Teal/Cyan -->
+    <color name="md_theme_dark_primary">#80DEEA</color>
+    <color name="md_theme_dark_onPrimary">#003640</color>
+    <color name="md_theme_dark_primaryContainer">#004D5B</color>
+    <color name="md_theme_dark_onPrimaryContainer">#B2EBF2</color>
+
+    <!-- Secondary Colors - Amber/Yellow -->
+    <color name="md_theme_dark_secondary">#FFD54F</color>
+    <color name="md_theme_dark_onSecondary">#3E2D00</color>
+    <color name="md_theme_dark_secondaryContainer">#594400</color>
+    <color name="md_theme_dark_onSecondaryContainer">#FFE9A3</color>
+
+    <!-- Tertiary Colors - Purple -->
+    <color name="md_theme_dark_tertiary">#CE93D8</color>
+    <color name="md_theme_dark_onTertiary">#3B1948</color>
+    <color name="md_theme_dark_tertiaryContainer">#532F5F</color>
+    <color name="md_theme_dark_onTertiaryContainer">#EDD7F5</color>
+
+    <!-- Error Colors -->
+    <color name="md_theme_dark_error">#FFB4AB</color>
+    <color name="md_theme_dark_errorContainer">#93000A</color>
+    <color name="md_theme_dark_onError">#690005</color>
+    <color name="md_theme_dark_onErrorContainer">#FFDAD6</color>
+
+    <!-- Background & Surface -->
+    <color name="md_theme_dark_background">#0A0E0F</color>
+    <color name="md_theme_dark_onBackground">#E0E3E3</color>
+    <color name="md_theme_dark_surface">#0A0E0F</color>
+    <color name="md_theme_dark_onSurface">#E0E3E3</color>
+    <color name="md_theme_dark_surfaceVariant">#3F484A</color>
+    <color name="md_theme_dark_onSurfaceVariant">#BFC8CA</color>
+
+    <!-- Outline & Shadow -->
+    <color name="md_theme_dark_outline">#8A9294</color>
+    <color name="md_theme_dark_outlineVariant">#3F484A</color>
+    <color name="md_theme_dark_shadow">#000000</color>
+    <color name="md_theme_dark_scrim">#000000</color>
+
+    <!-- Inverse Colors -->
+    <color name="md_theme_dark_inverseSurface">#E0E3E3</color>
+    <color name="md_theme_dark_inverseOnSurface">#2B3133</color>
+    <color name="md_theme_dark_inversePrimary">#006874</color>
+
+    <!-- Custom Colors for App Features -->
+    <!-- Skeleton/Pose Detection -->
+    <color name="pose_landmark_point">#76FF03</color>          <!-- Neon Green -->
+    <color name="pose_landmark_connection">#00E5FF</color>     <!-- Cyan -->
+    <color name="pose_landmark_selected">#FFD600</color>       <!-- Yellow -->
+
+    <!-- Crop Box -->
+    <color name="crop_box_border">#FFEB3B</color>              <!-- Yellow -->
+    <color name="crop_box_border_selected">#FF6F00</color>     <!-- Deep Orange -->
+    <color name="crop_box_fill">#26FFEB3B</color>              <!-- Yellow 15% opacity -->
+    <color name="crop_box_corner">#FFEB3B</color>              <!-- Yellow -->
+    <color name="crop_box_outside_dimmed">#99000000</color>    <!-- Black 60% opacity -->
+
+    <!-- UI Elements -->
+    <color name="overlay_background">#CC000000</color>         <!-- Black 80% opacity -->
+    <color name="fab_background">#80DEEA</color>               <!-- Same as primary -->
+    <color name="selection_highlight">#4080DEEA</color>        <!-- Primary 25% opacity -->
+
+    <!-- Common Colors -->
+    <color name="black">#000000</color>
+    <color name="white">#FFFFFF</color>
+    <color name="transparent">#00000000</color>
+</resources>

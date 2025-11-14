@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- 图片读取权限 -->
+    <!-- Android 13+ (API 33+) -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+
+    <!-- Android 10-12 (API 29-32) -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+
+    <!-- Android 9 及以下 + 写入权限 (API 28-) -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29"
+        tools:ignore="ScopedStorage" />
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.AutoCropAlbum"
+        android:hardwareAccelerated="true"
+        tools:targetApi="31">
+
+        <!-- 主入口 Activity - Gallery -->
+        <activity
+            android:name=".ui.gallery.GalleryActivity"
+            android:exported="true"
+            android:screenOrientation="portrait">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- 编辑器 Activity -->
+        <activity
+            android:name=".ui.editor.EditorActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.AutoCropAlbum.Fullscreen" />
+
+    </application>
+
+</manifest>

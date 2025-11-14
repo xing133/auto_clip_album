@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Auto Crop Album</string>
+
+    <!-- Gallery Screen -->
+    <string name="gallery_title">Photos</string>
+    <string name="sort_by">Sort by</string>
+    <string name="sort_by_name">File Name</string>
+    <string name="sort_by_date_modified">Date Modified</string>
+    <string name="sort_by_date_taken">Date Taken</string>
+    <string name="no_images_found">No images found</string>
+
+    <!-- Editor Screen -->
+    <string name="editor_title">Edit Photo</string>
+    <string name="crop">Crop</string>
+    <string name="cancel">Cancel</string>
+    <string name="save_option">Save Option</string>
+    <string name="overwrite_original">Overwrite Original</string>
+    <string name="save_as_new">Save as New File</string>
+    <string name="detecting_pose">Detecting pose…</string>
+    <string name="no_person_detected">No person detected. Tap to create manual crop box.</string>
+    <string name="multiple_persons_detected">%d persons detected. Tap to select.</string>
+    <string name="person_number">Person %d</string>
+    <string name="manual_crop">Manual Crop</string>
+    <string name="auto_crop">Auto Crop</string>
+
+    <!-- Cropping Messages -->
+    <string name="cropping_image">Cropping image…</string>
+    <string name="crop_success">Image cropped successfully</string>
+    <string name="crop_failed">Failed to crop image</string>
+    <string name="saving_image">Saving image…</string>
+
+    <!-- Permissions -->
+    <string name="permission_required">Permission Required</string>
+    <string name="permission_images_rationale">This app needs access to your photos to display and edit them.</string>
+    <string name="permission_denied">Permission denied. Please grant permission in Settings.</string>
+    <string name="grant_permission">Grant Permission</string>
+    <string name="open_settings">Open Settings</string>
+
+    <!-- Common -->
+    <string name="ok">OK</string>
+    <string name="loading">Loading…</string>
+    <string name="error_occurred">An error occurred</string>
+</resources>
