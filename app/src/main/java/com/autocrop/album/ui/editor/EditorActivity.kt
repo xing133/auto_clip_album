@@ -44,6 +44,7 @@ class EditorActivity : AppCompatActivity() {
 
     private lateinit var gestureDetector: GestureDetectorCompat
     private var isProcessing = false
+    private var isPoseDetectorReady = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -68,21 +69,30 @@ class EditorActivity : AppCompatActivity() {
         setupButtons()
         setupGestureDetector()
 
-        // 初始化 PoseDetector
+        // 初始化 PoseDetector（必须先初始化完成后再处理图片）
         lifecycleScope.launch {
             try {
+                showLoading(true, "Initializing pose detector...")
                 poseDetector.initialize()
+                isPoseDetectorReady = true
+                showLoading(false)
+
+                // 初始化完成后处理当前图片
+                val viewHolder = (binding.viewPager.getChildAt(0) as? androidx.recyclerview.widget.RecyclerView)
+                    ?.findViewHolderForAdapterPosition(currentPosition) as? ImagePagerAdapter.ImagePageViewHolder
+                viewHolder?.getBinding()?.let { pageBinding ->
+                    processCurrentImage(pageBinding)
+                }
             } catch (e: Exception) {
                 showError("Failed to initialize pose detector: ${e.message}")
+                isPoseDetectorReady = false
             }
         }
     }
 
     private fun setupViewPager() {
         adapter = ImagePagerAdapter(imageUris) { position, pageBinding ->
-            if (position == currentPosition) {
-                processCurrentImage(pageBinding)
-            }
+            // 不在这里处理，等初始化完成后再处理
         }
 
         binding.viewPager.adapter = adapter
@@ -95,12 +105,14 @@ class EditorActivity : AppCompatActivity() {
                 currentBitmap?.recycle()
                 currentBitmap = null
 
-                // 加载新图片时重新检测
-                val viewHolder = (binding.viewPager.getChildAt(0) as? androidx.recyclerview.widget.RecyclerView)
-                    ?.findViewHolderForAdapterPosition(position) as? ImagePagerAdapter.ImagePageViewHolder
+                // 只有在初始化完成后才处理新图片
+                if (isPoseDetectorReady) {
+                    val viewHolder = (binding.viewPager.getChildAt(0) as? androidx.recyclerview.widget.RecyclerView)
+                        ?.findViewHolderForAdapterPosition(position) as? ImagePagerAdapter.ImagePageViewHolder
 
-                viewHolder?.getBinding()?.let { pageBinding ->
-                    processCurrentImage(pageBinding)
+                    viewHolder?.getBinding()?.let { pageBinding ->
+                        processCurrentImage(pageBinding)
+                    }
                 }
             }
         })
@@ -128,6 +140,10 @@ class EditorActivity : AppCompatActivity() {
 
     private fun processCurrentImage(pageBinding: PageEditorImageBinding) {
         if (isProcessing) return
+        if (!isPoseDetectorReady) {
+            showStatus("Waiting for pose detector to initialize...")
+            return
+        }
 
         lifecycleScope.launch {
             isProcessing = true
@@ -136,9 +152,9 @@ class EditorActivity : AppCompatActivity() {
             try {
                 val uri = imageUris[currentPosition]
 
-                // 加载图片
+                // 加载图片（降低到 1024 以减少内存压力）
                 val bitmap = withContext(Dispatchers.IO) {
-                    imageProcessor.loadBitmap(uri)
+                    imageProcessor.loadBitmap(uri, maxDimension = 1024)
                 } ?: run {
                     showError("Failed to load image")
                     return@launch
@@ -184,11 +200,14 @@ class EditorActivity : AppCompatActivity() {
         val imageView = pageBinding.imageView
         val overlayView = pageBinding.cropOverlayView
 
+        // 使用检测时的 bitmap 尺寸（而非 drawable 尺寸）确保坐标一致
+        val detectionBitmap = currentBitmap
+        if (detectionBitmap == null) return
+
         // 计算图片在 ImageView 中的位置和缩放
         imageView.post {
-            val drawable = imageView.drawable ?: return@post
-            val imageWidth = drawable.intrinsicWidth
-            val imageHeight = drawable.intrinsicHeight
+            val imageWidth = detectionBitmap.width
+            val imageHeight = detectionBitmap.height
 
             if (imageWidth == 0 || imageHeight == 0) return@post
 
