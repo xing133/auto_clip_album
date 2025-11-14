@@ -98,6 +98,9 @@ class EditorActivity : AppCompatActivity() {
         binding.viewPager.adapter = adapter
         binding.viewPager.setCurrentItem(currentPosition, false)
 
+        // 禁用滑动功能，使用按钮切换图片
+        binding.viewPager.isUserInputEnabled = false
+
         binding.viewPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
             override fun onPageSelected(position: Int) {
                 currentPosition = position
@@ -105,17 +108,26 @@ class EditorActivity : AppCompatActivity() {
                 currentBitmap?.recycle()
                 currentBitmap = null
 
+                // 更新导航按钮的可见性
+                updateNavigationButtons()
+
                 // 只有在初始化完成后才处理新图片
                 if (isPoseDetectorReady) {
-                    val viewHolder = (binding.viewPager.getChildAt(0) as? androidx.recyclerview.widget.RecyclerView)
-                        ?.findViewHolderForAdapterPosition(position) as? ImagePagerAdapter.ImagePageViewHolder
+                    // 使用 post 确保 ViewHolder 已经创建完成
+                    binding.viewPager.post {
+                        val viewHolder = (binding.viewPager.getChildAt(0) as? androidx.recyclerview.widget.RecyclerView)
+                            ?.findViewHolderForAdapterPosition(position) as? ImagePagerAdapter.ImagePageViewHolder
 
-                    viewHolder?.getBinding()?.let { pageBinding ->
-                        processCurrentImage(pageBinding)
+                        viewHolder?.getBinding()?.let { pageBinding ->
+                            processCurrentImage(pageBinding)
+                        }
                     }
                 }
             }
         })
+
+        // 初始化导航按钮
+        updateNavigationButtons()
     }
 
     private fun setupButtons() {
@@ -126,6 +138,27 @@ class EditorActivity : AppCompatActivity() {
         binding.btnCancel.setOnClickListener {
             finish()
         }
+
+        // 导航按钮
+        binding.btnPrevImage.setOnClickListener {
+            if (currentPosition > 0) {
+                binding.viewPager.setCurrentItem(currentPosition - 1, true)
+            }
+        }
+
+        binding.btnNextImage.setOnClickListener {
+            if (currentPosition < imageUris.size - 1) {
+                binding.viewPager.setCurrentItem(currentPosition + 1, true)
+            }
+        }
+    }
+
+    private fun updateNavigationButtons() {
+        // 第一张图片时隐藏"上一张"按钮
+        binding.btnPrevImage.visibility = if (currentPosition > 0) View.VISIBLE else View.GONE
+
+        // 最后一张图片时隐藏"下一张"按钮
+        binding.btnNextImage.visibility = if (currentPosition < imageUris.size - 1) View.VISIBLE else View.GONE
     }
 
     private fun setupGestureDetector() {

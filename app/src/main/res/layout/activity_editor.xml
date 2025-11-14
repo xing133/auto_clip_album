@@ -47,6 +47,31 @@
         tools:text="Detecting pose…"
         tools:visibility="visible" />
 
+    <!-- Navigation buttons -->
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnPrevImage"
+        style="?attr/materialIconButtonStyle"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_margin="16dp"
+        app:icon="@android:drawable/ic_media_previous"
+        app:iconTint="@color/white"
+        app:backgroundTint="@color/overlay_background"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnNextImage"
+        style="?attr/materialIconButtonStyle"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_margin="16dp"
+        app:icon="@android:drawable/ic_media_next"
+        app:iconTint="@color/white"
+        app:backgroundTint="@color/overlay_background"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
     <!-- Bottom controls -->
     <LinearLayout
         android:id="@+id/controlsContainer"
