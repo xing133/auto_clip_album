@@ -179,14 +179,18 @@ class CropOverlayView @JvmOverloads constructor(
                     startLandmark.visibility > DetectedPerson.VISIBILITY_THRESHOLD &&
                     endLandmark.visibility > DetectedPerson.VISIBILITY_THRESHOLD
                 ) {
-                    val startPoint = imageToViewCoordinates(startLandmark.position)
-                    val endPoint = imageToViewCoordinates(endLandmark.position)
+                    // 只绘制两个端点都在图片范围内的连线
+                    if (isPointInImageBounds(startLandmark.position) &&
+                        isPointInImageBounds(endLandmark.position)) {
+                        val startPoint = imageToViewCoordinates(startLandmark.position)
+                        val endPoint = imageToViewCoordinates(endLandmark.position)
 
-                    canvas.drawLine(
-                        startPoint.x, startPoint.y,
-                        endPoint.x, endPoint.y,
-                        landmarkConnectionPaint
-                    )
+                        canvas.drawLine(
+                            startPoint.x, startPoint.y,
+                            endPoint.x, endPoint.y,
+                            landmarkConnectionPaint
+                        )
+                    }
                 }
             }
         }
@@ -195,7 +199,9 @@ class CropOverlayView @JvmOverloads constructor(
     private fun drawPoseLandmarks(canvas: Canvas) {
         detectedPersons.forEach { person ->
             person.landmarks.forEach { landmark ->
-                if (landmark.visibility > DetectedPerson.VISIBILITY_THRESHOLD) {
+                if (landmark.visibility > DetectedPerson.VISIBILITY_THRESHOLD &&
+                    isPointInImageBounds(landmark.position)) {
+                    // 只绘制在图片范围内的骨骼点
                     val point = imageToViewCoordinates(landmark.position)
                     canvas.drawCircle(point.x, point.y, 8f, landmarkPointPaint)
                 }
@@ -401,6 +407,14 @@ class CropOverlayView @JvmOverloads constructor(
         val dx = p1.x - p2.x
         val dy = p1.y - p2.y
         return sqrt(dx * dx + dy * dy)
+    }
+
+    /**
+     * 检查点是否在图片范围内
+     */
+    private fun isPointInImageBounds(point: PointF): Boolean {
+        return point.x >= 0f && point.x <= imageWidth &&
+               point.y >= 0f && point.y <= imageHeight
     }
 
     /**
