@@ -80,7 +80,8 @@ class PoseDetector(private val context: Context) {
                     // MediaPipe 返回的是归一化坐标 [0, 1]，需要转换为像素坐标
                     val x = landmark.x() * bitmap.width
                     val y = landmark.y() * bitmap.height
-                    val visibility = if (index < result.segmentationMasks().size) {
+                    val maskCount = result.segmentationMasks().map { it.size }.orElse(0)
+                    val visibility = if (index < maskCount) {
                         landmark.visibility().orElse(1.0f)
                     } else {
                         1.0f

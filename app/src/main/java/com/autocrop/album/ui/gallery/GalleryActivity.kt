@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
+import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
@@ -29,21 +30,25 @@ class GalleryActivity : AppCompatActivity() {
     private var currentSortOrder = ImageItem.Companion.SortOrder.DATE_MODIFIED_DESC
     private var imageList: List<ImageItem> = emptyList()
 
-    private val permissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        if (permissions.all { it.value }) {
-            // 所有权限已授权
-            loadImages()
-        } else {
-            // 权限被拒绝
-            if (!PermissionHelper.shouldShowRationale(this)) {
-                // 用户选择了"不再询问"
-                PermissionHelper.showPermissionDeniedDialog(this)
+    private lateinit var permissionLauncher: ActivityResultLauncher<Array<String>>
+
+    private fun initPermissionLauncher() {
+        permissionLauncher = registerForActivityResult(
+            ActivityResultContracts.RequestMultiplePermissions()
+        ) { permissions ->
+            if (permissions.all { it.value }) {
+                // 所有权限已授权
+                loadImages()
             } else {
-                // 再次显示说明
-                PermissionHelper.showRationaleDialog(this) {
-                    PermissionHelper.requestPermissions(permissionLauncher)
+                // 权限被拒绝
+                if (!PermissionHelper.shouldShowRationale(this)) {
+                    // 用户选择了"不再询问"
+                    PermissionHelper.showPermissionDeniedDialog(this)
+                } else {
+                    // 再次显示说明
+                    PermissionHelper.showRationaleDialog(this) {
+                        permissionLauncher.launch(PermissionHelper.getRequiredPermissions())
+                    }
                 }
             }
         }
@@ -56,6 +61,7 @@ class GalleryActivity : AppCompatActivity() {
 
         setSupportActionBar(binding.toolbar)
 
+        initPermissionLauncher()
         repository = MediaStoreRepository(this)
         setupRecyclerView()
 
