@@ -99,8 +99,11 @@ class PoseDetector(private val context: Context) {
                             )
                         )
 
-                        // 计算边界框
-                        if (visibility > DetectedPerson.VISIBILITY_THRESHOLD) {
+                        // 计算边界框：只使用在图片范围内的骨骼点
+                        // 过滤掉 MediaPipe 预测的、超出图片边界的部分
+                        if (visibility > DetectedPerson.VISIBILITY_THRESHOLD &&
+                            x >= 0 && x <= bitmap.width &&
+                            y >= 0 && y <= bitmap.height) {
                             minX = minOf(minX, x)
                             minY = minOf(minY, y)
                             maxX = maxOf(maxX, x)

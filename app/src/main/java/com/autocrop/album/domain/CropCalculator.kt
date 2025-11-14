@@ -12,9 +12,30 @@ import kotlin.math.min
  */
 object CropCalculator {
 
-    private const val PADDING_RATIO = 0.2f  // 边距比例 20%
-    private const val MIN_ASPECT_RATIO = 1f / 3f  // 最小宽高比 1:3
-    private const val MAX_ASPECT_RATIO = 3f / 1f  // 最大宽高比 3:1
+    // ========== 可调参数 ==========
+
+    /**
+     * 边距比例：在骨骼 boundingBox 外围等量扩展的比例
+     * 0.2 = 上下左右各扩展 20%
+     * 建议范围：0.1 ~ 0.3
+     */
+    private const val PADDING_RATIO = 0.15f
+
+    /**
+     * 最小宽高比（宽/高）：防止竖图过于细长
+     * 1/2.5 表示：如果宽度 < 高度/2.5，则扩展宽度
+     * 例如：高 1000px，宽 < 400px 时会扩展宽度
+     * 建议范围：1/3.0 ~ 1/2.0
+     */
+    private const val MIN_ASPECT_RATIO = 1f / 2.5f
+
+    /**
+     * 最大宽高比（宽/高）：防止横图过于扁平
+     * 2.5 表示：如果宽度 > 高度*2.5，则扩展高度
+     * 例如：高 400px，宽 > 1000px 时会扩展高度
+     * 建议范围：2.0 ~ 3.0
+     */
+    private const val MAX_ASPECT_RATIO = 2.5f
 
     /**
      * 为检测到的人物生成裁剪框
