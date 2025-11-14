@@ -26,9 +26,14 @@ class ImageProcessor(private val context: Context) {
      * 加载图片，限制最大尺寸以避免内存问题
      * @param uri 图片 URI
      * @param maxDimension 最大边长（像素），默认 2048
+     * @param autoRemoveLetterbox 是否自动去除黑边，默认 true
      * @return Bitmap 或 null
      */
-    suspend fun loadBitmap(uri: Uri, maxDimension: Int = 2048): Bitmap? = withContext(Dispatchers.IO) {
+    suspend fun loadBitmap(
+        uri: Uri,
+        maxDimension: Int = 2048,
+        autoRemoveLetterbox: Boolean = true
+    ): Bitmap? = withContext(Dispatchers.IO) {
         try {
             // 第一次读取：获取图片尺寸
             val options = BitmapFactory.Options().apply {
@@ -65,9 +70,21 @@ class ImageProcessor(private val context: Context) {
                 inPreferredConfig = Bitmap.Config.ARGB_8888
             }
 
-            context.contentResolver.openInputStream(uri)?.use { inputStream ->
+            var bitmap = context.contentResolver.openInputStream(uri)?.use { inputStream ->
                 BitmapFactory.decodeStream(inputStream, null, loadOptions)
             }
+
+            // 自动去除黑边（视频截图常见）
+            if (bitmap != null && autoRemoveLetterbox) {
+                val croppedBitmap = LetterboxDetector.detectAndCrop(bitmap)
+                if (croppedBitmap != bitmap) {
+                    // 如果裁剪了黑边，释放原图
+                    bitmap.recycle()
+                    bitmap = croppedBitmap
+                }
+            }
+
+            bitmap
         } catch (e: Exception) {
             e.printStackTrace()
             null
@@ -149,8 +166,8 @@ class ImageProcessor(private val context: Context) {
         previewHeight: Int = 0
     ): Boolean = withContext(Dispatchers.IO) {
         try {
-            // 加载原图（不限制尺寸）
-            val bitmap = loadBitmap(sourceUri, maxDimension = Int.MAX_VALUE) ?: return@withContext false
+            // 加载原图（不限制尺寸，也要去黑边，保持和预览图一致）
+            val bitmap = loadBitmap(sourceUri, maxDimension = Int.MAX_VALUE, autoRemoveLetterbox = true) ?: return@withContext false
 
             // 如果提供了预览尺寸，需要将裁剪坐标按比例放大到原图
             val actualCropRect = if (previewWidth > 0 && previewHeight > 0) {
