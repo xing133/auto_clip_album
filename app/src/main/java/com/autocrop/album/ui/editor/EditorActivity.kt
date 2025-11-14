@@ -13,6 +13,7 @@ import androidx.core.view.GestureDetectorCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.viewpager2.widget.ViewPager2
 import com.autocrop.album.R
+import com.autocrop.album.data.ImageDataHolder
 import com.autocrop.album.data.MediaStoreRepository
 import com.autocrop.album.data.models.CropBox
 import com.autocrop.album.databinding.ActivityEditorBinding
@@ -54,8 +55,8 @@ class EditorActivity : AppCompatActivity() {
         imageProcessor = ImageProcessor(this)
         repository = MediaStoreRepository(this)
 
-        // 获取传入的图片列表
-        imageUris = intent.getParcelableArrayListExtra(EXTRA_IMAGE_URIS) ?: emptyList()
+        // 从 ImageDataHolder 获取图片列表，避免 Intent 传递大数据
+        imageUris = ImageDataHolder.getImageUris()
         currentPosition = intent.getIntExtra(EXTRA_IMAGE_POSITION, 0)
 
         if (imageUris.isEmpty()) {
@@ -277,8 +278,19 @@ class EditorActivity : AppCompatActivity() {
 
                 val tempFile = imageProcessor.getTempFile(fileName)
 
-                // 裁剪并保存
-                val success = imageProcessor.cropAndSave(uri, selectedBox.rect, tempFile)
+                // 裁剪并保存（传递预览图片尺寸用于坐标缩放）
+                val previewBitmap = currentBitmap
+                val success = if (previewBitmap != null) {
+                    imageProcessor.cropAndSave(
+                        uri,
+                        selectedBox.rect,
+                        tempFile,
+                        previewBitmap.width,
+                        previewBitmap.height
+                    )
+                } else {
+                    imageProcessor.cropAndSave(uri, selectedBox.rect, tempFile)
+                }
 
                 if (success) {
                     // 保存到媒体库

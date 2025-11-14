@@ -7,10 +7,17 @@ android {
     namespace = "com.autocrop.album"
     compileSdk = 34
 
+    // Android 15 兼容性：允许不安全的 native 代码执行（仅用于个人工具）
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+
     defaultConfig {
         applicationId = "com.autocrop.album"
         minSdk = 24
-        targetSdk = 34
+        targetSdk = 33  // 降低到 33 避免 Android 15 兼容性问题
         versionCode = 1
         versionName = "1.0"
 

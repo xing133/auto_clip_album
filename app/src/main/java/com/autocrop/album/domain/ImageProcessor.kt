@@ -22,10 +22,51 @@ class ImageProcessor(private val context: Context) {
     /**
      * 从 URI 加载 Bitmap
      */
-    suspend fun loadBitmap(uri: Uri): Bitmap? = withContext(Dispatchers.IO) {
+    /**
+     * 加载图片，限制最大尺寸以避免内存问题
+     * @param uri 图片 URI
+     * @param maxDimension 最大边长（像素），默认 2048
+     * @return Bitmap 或 null
+     */
+    suspend fun loadBitmap(uri: Uri, maxDimension: Int = 2048): Bitmap? = withContext(Dispatchers.IO) {
         try {
+            // 第一次读取：获取图片尺寸
+            val options = BitmapFactory.Options().apply {
+                inJustDecodeBounds = true
+            }
+
             context.contentResolver.openInputStream(uri)?.use { inputStream ->
-                BitmapFactory.decodeStream(inputStream)
+                BitmapFactory.decodeStream(inputStream, null, options)
+            }
+
+            val originalWidth = options.outWidth
+            val originalHeight = options.outHeight
+
+            if (originalWidth <= 0 || originalHeight <= 0) {
+                return@withContext null
+            }
+
+            // 计算缩放比例
+            val maxOriginalDimension = maxOf(originalWidth, originalHeight)
+            val sampleSize = if (maxOriginalDimension > maxDimension) {
+                // 计算2的幂次的采样率
+                var size = 1
+                while (maxOriginalDimension / (size * 2) > maxDimension) {
+                    size *= 2
+                }
+                size
+            } else {
+                1
+            }
+
+            // 第二次读取：按采样率加载图片
+            val loadOptions = BitmapFactory.Options().apply {
+                inSampleSize = sampleSize
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+            }
+
+            context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                BitmapFactory.decodeStream(inputStream, null, loadOptions)
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -91,17 +132,42 @@ class ImageProcessor(private val context: Context) {
      * @param targetFile 目标文件
      * @return 是否成功
      */
+    /**
+     * 裁剪并保存图片
+     * @param sourceUri 源图片 URI
+     * @param cropRect 裁剪区域（基于预览图片的像素坐标）
+     * @param targetFile 目标文件
+     * @param previewWidth 预览图片宽度（用于计算缩放比例）
+     * @param previewHeight 预览图片高度（用于计算缩放比例）
+     * @return 是否成功
+     */
     suspend fun cropAndSave(
         sourceUri: Uri,
         cropRect: RectF,
-        targetFile: File
+        targetFile: File,
+        previewWidth: Int = 0,
+        previewHeight: Int = 0
     ): Boolean = withContext(Dispatchers.IO) {
         try {
-            // 加载原图
-            val bitmap = loadBitmap(sourceUri) ?: return@withContext false
+            // 加载原图（不限制尺寸）
+            val bitmap = loadBitmap(sourceUri, maxDimension = Int.MAX_VALUE) ?: return@withContext false
+
+            // 如果提供了预览尺寸，需要将裁剪坐标按比例放大到原图
+            val actualCropRect = if (previewWidth > 0 && previewHeight > 0) {
+                val scaleX = bitmap.width.toFloat() / previewWidth
+                val scaleY = bitmap.height.toFloat() / previewHeight
+                RectF(
+                    cropRect.left * scaleX,
+                    cropRect.top * scaleY,
+                    cropRect.right * scaleX,
+                    cropRect.bottom * scaleY
+                )
+            } else {
+                cropRect
+            }
 
             // 裁剪
-            val croppedBitmap = cropBitmap(bitmap, cropRect) ?: return@withContext false
+            val croppedBitmap = cropBitmap(bitmap, actualCropRect) ?: return@withContext false
 
             // 保存
             val saved = saveBitmap(croppedBitmap, targetFile)

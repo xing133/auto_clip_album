@@ -11,6 +11,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
 import com.autocrop.album.R
+import com.autocrop.album.data.ImageDataHolder
 import com.autocrop.album.data.MediaStoreRepository
 import com.autocrop.album.data.models.ImageItem
 import com.autocrop.album.databinding.ActivityGalleryBinding
@@ -127,12 +128,11 @@ class GalleryActivity : AppCompatActivity() {
     }
 
     private fun openEditor(position: Int) {
+        // 使用 ImageDataHolder 共享数据，避免通过 Intent 传递大量数据
+        ImageDataHolder.setImageUris(imageList.map { it.uri })
+
         val intent = Intent(this, EditorActivity::class.java).apply {
             putExtra(EditorActivity.EXTRA_IMAGE_POSITION, position)
-            putParcelableArrayListExtra(
-                EditorActivity.EXTRA_IMAGE_URIS,
-                ArrayList(imageList.map { it.uri })
-            )
         }
         startActivity(intent)
     }
