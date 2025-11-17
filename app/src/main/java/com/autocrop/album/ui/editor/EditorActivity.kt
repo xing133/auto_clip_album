@@ -1,5 +1,7 @@
 package com.autocrop.album.ui.editor
 
+import android.app.Activity
+import android.content.IntentSender
 import android.graphics.Bitmap
 import android.graphics.RectF
 import android.net.Uri
@@ -8,6 +10,9 @@ import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
 import android.widget.Toast
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.GestureDetectorCompat
 import androidx.lifecycle.lifecycleScope
@@ -16,11 +21,13 @@ import com.autocrop.album.R
 import com.autocrop.album.data.ImageDataHolder
 import com.autocrop.album.data.MediaStoreRepository
 import com.autocrop.album.data.models.CropBox
+import com.autocrop.album.data.MediaStoreRepository.SaveImageResult
 import com.autocrop.album.databinding.ActivityEditorBinding
 import com.autocrop.album.databinding.PageEditorImageBinding
 import com.autocrop.album.domain.CropCalculator
 import com.autocrop.album.domain.ImageProcessor
 import com.autocrop.album.domain.PoseDetector
+import com.autocrop.album.ui.editor.ImagePagerAdapter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -45,6 +52,8 @@ class EditorActivity : AppCompatActivity() {
     private lateinit var gestureDetector: GestureDetectorCompat
     private var isProcessing = false
     private var isPoseDetectorReady = false
+    private lateinit var editPermissionLauncher: ActivityResultLauncher<IntentSenderRequest>
+    private var pendingSaveRequest: PendingSaveRequest? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -55,6 +64,7 @@ class EditorActivity : AppCompatActivity() {
         poseDetector = PoseDetector(this)
         imageProcessor = ImageProcessor(this)
         repository = MediaStoreRepository(this)
+        registerEditPermissionLauncher()
 
         // 从 ImageDataHolder 获取图片列表，避免 Intent 传递大数据
         imageUris = ImageDataHolder.getImageUris()
@@ -345,25 +355,22 @@ class EditorActivity : AppCompatActivity() {
                 }
 
                 if (success) {
-                    // 保存到媒体库
-                    val savedUri = repository.saveCroppedImage(uri, tempFile, overwriteOriginal)
-
-                    if (savedUri != null) {
-                        withContext(Dispatchers.Main) {
-                            showStatus(getString(R.string.crop_success))
-                            Toast.makeText(
-                                this@EditorActivity,
-                                getString(R.string.crop_success),
-                                Toast.LENGTH_SHORT
-                            ).show()
-
-                            // 重新加载当前图片
-                            if (overwriteOriginal) {
-                                viewHolder?.getBinding()?.let { processCurrentImage(it) }
-                            }
+                    when (val saveResult = repository.saveCroppedImage(uri, tempFile, overwriteOriginal)) {
+                        is SaveImageResult.Success -> {
+                            pendingSaveRequest = null
+                            handleSaveSuccess(overwriteOriginal)
                         }
-                    } else {
-                        showError(getString(R.string.crop_failed))
+                        is SaveImageResult.RequiresPermission -> {
+                            pendingSaveRequest = PendingSaveRequest(uri, tempFile, overwriteOriginal)
+                            showLoading(false)
+                            isProcessing = false
+                            requestWritePermission(saveResult.intentSender)
+                            return@launch
+                        }
+                        is SaveImageResult.Error -> {
+                            pendingSaveRequest = null
+                            showError(getString(R.string.crop_failed))
+                        }
                     }
                 } else {
                     showError(getString(R.string.crop_failed))
@@ -372,6 +379,97 @@ class EditorActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 e.printStackTrace()
                 showError("Crop error: ${e.message}")
+            } finally {
+                isProcessing = false
+                showLoading(false)
+            }
+        }
+    }
+
+    private fun handleSaveSuccess(overwriteOriginal: Boolean) {
+        showStatus(getString(R.string.crop_success))
+        Toast.makeText(this@EditorActivity, getString(R.string.crop_success), Toast.LENGTH_SHORT).show()
+        if (overwriteOriginal) {
+            reloadCurrentPreview()
+        }
+    }
+
+    private fun reloadCurrentPreview() {
+        val uri = imageUris[currentPosition]
+
+        // 清除 Glide 缓存，确保重新加载图片
+        lifecycleScope.launch(Dispatchers.Main) {
+            try {
+                // 清除内存缓存
+                com.bumptech.glide.Glide.get(this@EditorActivity).clearMemory()
+
+                // 清除磁盘缓存（需要在后台线程）
+                withContext(Dispatchers.IO) {
+                    com.bumptech.glide.Glide.get(this@EditorActivity).clearDiskCache()
+                }
+
+                // 重新加载图片
+                val recyclerView = binding.viewPager.getChildAt(0) as? androidx.recyclerview.widget.RecyclerView ?: return@launch
+                val holder = recyclerView.findViewHolderForAdapterPosition(currentPosition) as? ImagePagerAdapter.ImagePageViewHolder ?: return@launch
+
+                holder.getBinding()?.let { pageBinding ->
+                    // 重新加载图片到 ImageView
+                    com.bumptech.glide.Glide.with(pageBinding.imageView)
+                        .load(uri)
+                        .skipMemoryCache(true)
+                        .into(pageBinding.imageView)
+
+                    // 重新处理图片（骨骼检测）
+                    pageBinding.imageView.post {
+                        processCurrentImage(pageBinding)
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                showError("Failed to reload preview: ${e.message}")
+            }
+        }
+    }
+
+    private fun registerEditPermissionLauncher() {
+        editPermissionLauncher = registerForActivityResult(
+            ActivityResultContracts.StartIntentSenderForResult()
+        ) { result ->
+            if (result.resultCode == Activity.RESULT_OK) {
+                retryPendingSave()
+            } else {
+                pendingSaveRequest = null
+                showError(getString(R.string.crop_failed))
+            }
+        }
+    }
+
+    private fun requestWritePermission(intentSender: IntentSender) {
+        val request = IntentSenderRequest.Builder(intentSender).build()
+        showStatus(getString(R.string.permission_required))
+        editPermissionLauncher.launch(request)
+    }
+
+    private fun retryPendingSave() {
+        val pending = pendingSaveRequest ?: return
+        lifecycleScope.launch {
+            isProcessing = true
+            showLoading(true, getString(R.string.saving_image))
+            try {
+                when (val result = repository.saveCroppedImage(pending.sourceUri, pending.tempFile, pending.overwriteOriginal)) {
+                    is SaveImageResult.Success -> {
+                        pendingSaveRequest = null
+                        handleSaveSuccess(pending.overwriteOriginal)
+                    }
+                    is SaveImageResult.RequiresPermission -> {
+                        requestWritePermission(result.intentSender)
+                        return@launch
+                    }
+                    is SaveImageResult.Error -> {
+                        pendingSaveRequest = null
+                        showError(getString(R.string.crop_failed))
+                    }
+                }
             } finally {
                 isProcessing = false
                 showLoading(false)
@@ -427,4 +525,10 @@ class EditorActivity : AppCompatActivity() {
         const val EXTRA_IMAGE_URIS = "extra_image_uris"
         const val EXTRA_IMAGE_POSITION = "extra_image_position"
     }
+
+    private data class PendingSaveRequest(
+        val sourceUri: Uri,
+        val tempFile: File,
+        val overwriteOriginal: Boolean
+    )
 }

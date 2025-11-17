@@ -73,7 +73,23 @@ class GalleryActivity : AppCompatActivity() {
         super.onResume()
         // 从编辑页面返回时刷新列表
         if (PermissionHelper.hasPermissions(this)) {
-            loadImages()
+            // 清除 Glide 缓存，确保显示最新的图片
+            lifecycleScope.launch {
+                try {
+                    // 清除内存缓存（主线程）
+                    com.bumptech.glide.Glide.get(this@GalleryActivity).clearMemory()
+
+                    // 清除磁盘缓存（后台线程）
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        com.bumptech.glide.Glide.get(this@GalleryActivity).clearDiskCache()
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+
+                // 重新加载图片列表
+                loadImages()
+            }
         }
     }
 

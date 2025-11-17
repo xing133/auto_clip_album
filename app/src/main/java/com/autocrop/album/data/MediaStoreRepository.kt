@@ -1,8 +1,10 @@
 package com.autocrop.album.data
 
+import android.app.RecoverableSecurityException
 import android.content.ContentResolver
 import android.content.ContentValues
 import android.content.Context
+import android.content.IntentSender
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
@@ -10,13 +12,19 @@ import com.autocrop.album.data.models.ImageItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.FileOutputStream
+import java.io.IOException
 import java.util.Date
 
 /**
  * MediaStore 数据访问层
  */
 class MediaStoreRepository(private val context: Context) {
+
+    sealed class SaveImageResult {
+        data class Success(val uri: Uri) : SaveImageResult()
+        data class RequiresPermission(val intentSender: IntentSender) : SaveImageResult()
+        data class Error(val throwable: Throwable? = null) : SaveImageResult()
+    }
 
     private val contentResolver: ContentResolver = context.contentResolver
 
@@ -119,26 +127,67 @@ class MediaStoreRepository(private val context: Context) {
         sourceUri: Uri,
         outputFile: File,
         overwriteOriginal: Boolean
-    ): Uri? = withContext(Dispatchers.IO) {
+    ): SaveImageResult = withContext(Dispatchers.IO) {
         try {
             if (overwriteOriginal) {
-                // 覆盖原图
-                val sourceFile = File(getPathFromUri(sourceUri) ?: return@withContext null)
-                if (outputFile.absolutePath != sourceFile.absolutePath) {
-                    outputFile.copyTo(sourceFile, overwrite = true)
+                val sourcePath = getPathFromUri(sourceUri) ?: return@withContext SaveImageResult.Error()
+                val sourceFile = File(sourcePath)
+                when (val result = overwriteImageUri(sourceUri, outputFile)) {
+                    is OverwriteOutcome.Success -> {
+                        notifyMediaStoreUpdated(sourceFile.absolutePath)
+                        SaveImageResult.Success(sourceUri)
+                    }
+                    is OverwriteOutcome.RequiresPermission -> SaveImageResult.RequiresPermission(result.intentSender)
+                    is OverwriteOutcome.Failure -> {
+                        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                            outputFile.copyTo(sourceFile, overwrite = true)
+                            notifyMediaStoreUpdated(sourceFile.absolutePath)
+                            SaveImageResult.Success(sourceUri)
+                        } else {
+                            SaveImageResult.Error(IOException("Unable to overwrite image without permission"))
+                        }
+                    }
                 }
-                // 通知系统媒体库更新
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI.also { uri ->
-                    contentResolver.update(uri, ContentValues(), "${MediaStore.Images.Media.DATA}=?", arrayOf(sourceFile.absolutePath))
-                }
-                sourceUri
             } else {
                 // 新建文件
-                insertImageToMediaStore(outputFile)
+                insertImageToMediaStore(outputFile)?.let { insertedUri ->
+                    SaveImageResult.Success(insertedUri)
+                } ?: SaveImageResult.Error()
             }
         } catch (e: Exception) {
             e.printStackTrace()
-            null
+            SaveImageResult.Error(e)
+        }
+    }
+
+    private fun overwriteImageUri(targetUri: Uri, tempFile: File): OverwriteOutcome {
+        return try {
+            contentResolver.openOutputStream(targetUri, "wt")?.use { outputStream ->
+                tempFile.inputStream().use { inputStream ->
+                    inputStream.copyTo(outputStream)
+                }
+            } ?: return OverwriteOutcome.Failure
+            OverwriteOutcome.Success
+        } catch (e: RecoverableSecurityException) {
+            OverwriteOutcome.RequiresPermission(e.userAction.actionIntent.intentSender)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            OverwriteOutcome.Failure
+        }
+    }
+
+    private fun notifyMediaStoreUpdated(path: String) {
+        try {
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI.also { uri ->
+                contentResolver.update(
+                    uri,
+                    ContentValues(),
+                    "${MediaStore.Images.Media.DATA}=?",
+                    arrayOf(path)
+                )
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
@@ -184,5 +233,11 @@ class MediaStoreRepository(private val context: Context) {
             return cursor.getString(columnIndex)
         }
         return null
+    }
+
+    private sealed class OverwriteOutcome {
+        object Success : OverwriteOutcome()
+        data class RequiresPermission(val intentSender: IntentSender) : OverwriteOutcome()
+        object Failure : OverwriteOutcome()
     }
 }

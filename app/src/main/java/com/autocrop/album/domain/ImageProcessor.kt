@@ -108,11 +108,18 @@ class ImageProcessor(private val context: Context) {
             val width = right - left
             val height = bottom - top
 
+            android.util.Log.d("ImageProcessor", "cropBitmap: bitmap size=${bitmap.width}x${bitmap.height}")
+            android.util.Log.d("ImageProcessor", "cropBitmap: crop region: left=$left, top=$top, right=$right, bottom=$bottom")
+            android.util.Log.d("ImageProcessor", "cropBitmap: crop size: ${width}x${height}")
+
             if (width <= 0 || height <= 0) {
+                android.util.Log.e("ImageProcessor", "cropBitmap: invalid crop size!")
                 return@withContext null
             }
 
-            Bitmap.createBitmap(bitmap, left, top, width, height)
+            val result = Bitmap.createBitmap(bitmap, left, top, width, height)
+            android.util.Log.d("ImageProcessor", "cropBitmap: result size=${result.width}x${result.height}")
+            result
         } catch (e: Exception) {
             e.printStackTrace()
             null
@@ -169,10 +176,15 @@ class ImageProcessor(private val context: Context) {
             // 加载原图（不限制尺寸，也要去黑边，保持和预览图一致）
             val bitmap = loadBitmap(sourceUri, maxDimension = Int.MAX_VALUE, autoRemoveLetterbox = true) ?: return@withContext false
 
+            android.util.Log.d("ImageProcessor", "cropAndSave: original bitmap size=${bitmap.width}x${bitmap.height}")
+            android.util.Log.d("ImageProcessor", "cropAndSave: preview size=${previewWidth}x${previewHeight}")
+            android.util.Log.d("ImageProcessor", "cropAndSave: cropRect before scale=$cropRect")
+
             // 如果提供了预览尺寸，需要将裁剪坐标按比例放大到原图
             val actualCropRect = if (previewWidth > 0 && previewHeight > 0) {
                 val scaleX = bitmap.width.toFloat() / previewWidth
                 val scaleY = bitmap.height.toFloat() / previewHeight
+                android.util.Log.d("ImageProcessor", "cropAndSave: scale factors: scaleX=$scaleX, scaleY=$scaleY")
                 RectF(
                     cropRect.left * scaleX,
                     cropRect.top * scaleY,
@@ -182,6 +194,8 @@ class ImageProcessor(private val context: Context) {
             } else {
                 cropRect
             }
+
+            android.util.Log.d("ImageProcessor", "cropAndSave: actualCropRect=$actualCropRect")
 
             // 裁剪
             val croppedBitmap = cropBitmap(bitmap, actualCropRect) ?: return@withContext false

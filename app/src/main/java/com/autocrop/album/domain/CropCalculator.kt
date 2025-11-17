@@ -27,7 +27,7 @@ object CropCalculator {
      * 例如：高 1000px，宽 < 400px 时会扩展宽度
      * 建议范围：1/3.0 ~ 1/2.0
      */
-    private const val MIN_ASPECT_RATIO = 1f / 2.5f
+    private const val MIN_ASPECT_RATIO = 1f / 1.6f
 
     /**
      * 最大宽高比（宽/高）：防止横图过于扁平
@@ -35,7 +35,7 @@ object CropCalculator {
      * 例如：高 400px，宽 > 1000px 时会扩展高度
      * 建议范围：2.0 ~ 3.0
      */
-    private const val MAX_ASPECT_RATIO = 2.5f
+    private const val MAX_ASPECT_RATIO = 1.6f
 
     /**
      * 为检测到的人物生成裁剪框
