@@ -29,9 +29,40 @@ class MediaStoreRepository(private val context: Context) {
     private val contentResolver: ContentResolver = context.contentResolver
 
     /**
-     * 查询所有图片
+     * 查询所有可用的目录
      */
-    suspend fun queryImages(sortOrder: ImageItem.Companion.SortOrder = ImageItem.Companion.SortOrder.DATE_MODIFIED_DESC): List<ImageItem> =
+    suspend fun queryFolders(): List<String> = withContext(Dispatchers.IO) {
+        val folders = mutableSetOf<String>()
+        val projection = arrayOf(MediaStore.Images.Media.DATA)
+
+        contentResolver.query(
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            projection,
+            null,
+            null,
+            null
+        )?.use { cursor ->
+            val dataColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATA)
+            while (cursor.moveToNext()) {
+                val path = cursor.getString(dataColumn)
+                path?.let {
+                    val folder = File(it).parent
+                    folder?.let { f -> folders.add(f) }
+                }
+            }
+        }
+
+        folders.sorted()
+    }
+
+    /**
+     * 查询所有图片
+     * @param folderPath 可选的目录路径，如果指定则只显示该目录下的图片
+     */
+    suspend fun queryImages(
+        sortOrder: ImageItem.Companion.SortOrder = ImageItem.Companion.SortOrder.DATE_MODIFIED_DESC,
+        folderPath: String? = null
+    ): List<ImageItem> =
         withContext(Dispatchers.IO) {
             val images = mutableListOf<ImageItem>()
             val projection = arrayOf(
@@ -47,8 +78,8 @@ class MediaStoreRepository(private val context: Context) {
                 MediaStore.Images.Media.DATA
             )
 
-            val selection = null
-            val selectionArgs = null
+            val selection = folderPath?.let { "${MediaStore.Images.Media.DATA} LIKE ?" }
+            val selectionArgs = folderPath?.let { arrayOf("$it/%") }
             val orderBy = when (sortOrder) {
                 ImageItem.Companion.SortOrder.NAME_ASC -> "${MediaStore.Images.Media.DISPLAY_NAME} ASC"
                 ImageItem.Companion.SortOrder.NAME_DESC -> "${MediaStore.Images.Media.DISPLAY_NAME} DESC"
@@ -129,32 +160,62 @@ class MediaStoreRepository(private val context: Context) {
         overwriteOriginal: Boolean
     ): SaveImageResult = withContext(Dispatchers.IO) {
         try {
+            android.util.Log.d("MediaStoreRepository", "saveCroppedImage: sourceUri=$sourceUri, outputFile=${outputFile.absolutePath}, overwriteOriginal=$overwriteOriginal")
+            android.util.Log.d("MediaStoreRepository", "saveCroppedImage: temp file exists=${outputFile.exists()}, size=${outputFile.length()}")
+
             if (overwriteOriginal) {
-                val sourcePath = getPathFromUri(sourceUri) ?: return@withContext SaveImageResult.Error()
-                val sourceFile = File(sourcePath)
+                android.util.Log.d("MediaStoreRepository", "saveCroppedImage: overwrite mode")
+                android.util.Log.d("MediaStoreRepository", "saveCroppedImage: calling overwriteImageUri...")
                 when (val result = overwriteImageUri(sourceUri, outputFile)) {
                     is OverwriteOutcome.Success -> {
-                        notifyMediaStoreUpdated(sourceFile.absolutePath)
+                        android.util.Log.d("MediaStoreRepository", "saveCroppedImage: overwrite success")
+                        // 不需要手动通知 MediaStore，ContentResolver 会自动处理
                         SaveImageResult.Success(sourceUri)
                     }
-                    is OverwriteOutcome.RequiresPermission -> SaveImageResult.RequiresPermission(result.intentSender)
+                    is OverwriteOutcome.RequiresPermission -> {
+                        android.util.Log.d("MediaStoreRepository", "saveCroppedImage: requires permission")
+                        SaveImageResult.RequiresPermission(result.intentSender)
+                    }
                     is OverwriteOutcome.Failure -> {
+                        android.util.Log.e("MediaStoreRepository", "saveCroppedImage: overwrite failed")
                         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-                            outputFile.copyTo(sourceFile, overwrite = true)
-                            notifyMediaStoreUpdated(sourceFile.absolutePath)
-                            SaveImageResult.Success(sourceUri)
+                            // 只在旧版本 Android 上尝试直接文件操作
+                            android.util.Log.d("MediaStoreRepository", "saveCroppedImage: trying legacy file copy")
+                            try {
+                                val sourcePath = getPathFromUri(sourceUri)
+                                if (sourcePath != null) {
+                                    val sourceFile = File(sourcePath)
+                                    outputFile.copyTo(sourceFile, overwrite = true)
+                                    notifyMediaStoreUpdated(sourceFile.absolutePath)
+                                    SaveImageResult.Success(sourceUri)
+                                } else {
+                                    android.util.Log.e("MediaStoreRepository", "saveCroppedImage: failed to get path for legacy copy")
+                                    SaveImageResult.Error(IOException("Unable to get file path"))
+                                }
+                            } catch (e: Exception) {
+                                android.util.Log.e("MediaStoreRepository", "saveCroppedImage: legacy copy failed", e)
+                                SaveImageResult.Error(e)
+                            }
                         } else {
+                            android.util.Log.e("MediaStoreRepository", "saveCroppedImage: unable to overwrite without permission on Android Q+")
                             SaveImageResult.Error(IOException("Unable to overwrite image without permission"))
                         }
                     }
                 }
             } else {
+                android.util.Log.d("MediaStoreRepository", "saveCroppedImage: save as new file mode")
                 // 新建文件
-                insertImageToMediaStore(outputFile)?.let { insertedUri ->
+                val insertedUri = insertImageToMediaStore(outputFile)
+                if (insertedUri != null) {
+                    android.util.Log.d("MediaStoreRepository", "saveCroppedImage: insert success, uri=$insertedUri")
                     SaveImageResult.Success(insertedUri)
-                } ?: SaveImageResult.Error()
+                } else {
+                    android.util.Log.e("MediaStoreRepository", "saveCroppedImage: insert failed, returned null")
+                    SaveImageResult.Error()
+                }
             }
         } catch (e: Exception) {
+            android.util.Log.e("MediaStoreRepository", "saveCroppedImage: exception", e)
             e.printStackTrace()
             SaveImageResult.Error(e)
         }
@@ -162,15 +223,28 @@ class MediaStoreRepository(private val context: Context) {
 
     private fun overwriteImageUri(targetUri: Uri, tempFile: File): OverwriteOutcome {
         return try {
-            contentResolver.openOutputStream(targetUri, "wt")?.use { outputStream ->
+            android.util.Log.d("MediaStoreRepository", "overwriteImageUri: targetUri=$targetUri, tempFile=${tempFile.absolutePath}")
+            android.util.Log.d("MediaStoreRepository", "overwriteImageUri: temp file exists=${tempFile.exists()}, size=${tempFile.length()}")
+
+            val outputStream = contentResolver.openOutputStream(targetUri, "wt")
+            if (outputStream == null) {
+                android.util.Log.e("MediaStoreRepository", "overwriteImageUri: failed to open output stream")
+                return OverwriteOutcome.Failure
+            }
+
+            outputStream.use { out ->
                 tempFile.inputStream().use { inputStream ->
-                    inputStream.copyTo(outputStream)
+                    val bytesCopied = inputStream.copyTo(out)
+                    android.util.Log.d("MediaStoreRepository", "overwriteImageUri: copied $bytesCopied bytes")
                 }
-            } ?: return OverwriteOutcome.Failure
+            }
+            android.util.Log.d("MediaStoreRepository", "overwriteImageUri: success")
             OverwriteOutcome.Success
         } catch (e: RecoverableSecurityException) {
+            android.util.Log.d("MediaStoreRepository", "overwriteImageUri: RecoverableSecurityException, requires permission")
             OverwriteOutcome.RequiresPermission(e.userAction.actionIntent.intentSender)
         } catch (e: Exception) {
+            android.util.Log.e("MediaStoreRepository", "overwriteImageUri: exception", e)
             e.printStackTrace()
             OverwriteOutcome.Failure
         }
@@ -195,30 +269,54 @@ class MediaStoreRepository(private val context: Context) {
      * 将文件插入到 MediaStore
      */
     private fun insertImageToMediaStore(file: File): Uri? {
-        val values = ContentValues().apply {
-            put(MediaStore.Images.Media.DISPLAY_NAME, file.name)
-            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-            put(MediaStore.Images.Media.DATE_ADDED, System.currentTimeMillis() / 1000)
-            put(MediaStore.Images.Media.DATE_MODIFIED, System.currentTimeMillis() / 1000)
-            put(MediaStore.Images.Media.SIZE, file.length())
+        try {
+            android.util.Log.d("MediaStoreRepository", "insertImageToMediaStore: file=${file.absolutePath}")
+            android.util.Log.d("MediaStoreRepository", "insertImageToMediaStore: file exists=${file.exists()}, size=${file.length()}")
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.IS_PENDING, 0)
-                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/AutoCropAlbum")
-            } else {
-                put(MediaStore.Images.Media.DATA, file.absolutePath)
-            }
-        }
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, file.name)
+                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                put(MediaStore.Images.Media.DATE_ADDED, System.currentTimeMillis() / 1000)
+                put(MediaStore.Images.Media.DATE_MODIFIED, System.currentTimeMillis() / 1000)
+                put(MediaStore.Images.Media.SIZE, file.length())
 
-        return contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)?.also { uri ->
-            // 对于 Android 10+，需要写入文件内容
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                contentResolver.openOutputStream(uri)?.use { outputStream ->
-                    file.inputStream().use { inputStream ->
-                        inputStream.copyTo(outputStream)
-                    }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    put(MediaStore.Images.Media.IS_PENDING, 0)
+                    put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/AutoCropAlbum")
+                    android.util.Log.d("MediaStoreRepository", "insertImageToMediaStore: using RELATIVE_PATH (Android Q+)")
+                } else {
+                    put(MediaStore.Images.Media.DATA, file.absolutePath)
+                    android.util.Log.d("MediaStoreRepository", "insertImageToMediaStore: using DATA path (legacy)")
                 }
             }
+
+            val insertedUri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+            if (insertedUri == null) {
+                android.util.Log.e("MediaStoreRepository", "insertImageToMediaStore: insert returned null")
+                return null
+            }
+            android.util.Log.d("MediaStoreRepository", "insertImageToMediaStore: inserted URI=$insertedUri")
+
+            // 对于 Android 10+，需要写入文件内容
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                android.util.Log.d("MediaStoreRepository", "insertImageToMediaStore: copying file content to MediaStore")
+                contentResolver.openOutputStream(insertedUri)?.use { outputStream ->
+                    file.inputStream().use { inputStream ->
+                        val bytesCopied = inputStream.copyTo(outputStream)
+                        android.util.Log.d("MediaStoreRepository", "insertImageToMediaStore: copied $bytesCopied bytes")
+                    }
+                } ?: run {
+                    android.util.Log.e("MediaStoreRepository", "insertImageToMediaStore: failed to open output stream")
+                    return null
+                }
+            }
+
+            android.util.Log.d("MediaStoreRepository", "insertImageToMediaStore: success")
+            return insertedUri
+        } catch (e: Exception) {
+            android.util.Log.e("MediaStoreRepository", "insertImageToMediaStore: exception", e)
+            e.printStackTrace()
+            return null
         }
     }
 

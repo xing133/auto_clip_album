@@ -9,6 +9,7 @@
     <string name="sort_by_date_modified">Date Modified</string>
     <string name="sort_by_date_taken">Date Taken</string>
     <string name="no_images_found">No images found</string>
+    <string name="select_folder">Select Folder</string>
 
     <!-- Editor Screen -->
     <string name="editor_title">Edit Photo</string>

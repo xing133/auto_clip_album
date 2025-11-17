@@ -2,6 +2,7 @@ package com.autocrop.album.ui.gallery
 
 import android.content.Intent
 import android.os.Bundle
+import java.io.File
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
@@ -30,6 +31,8 @@ class GalleryActivity : AppCompatActivity() {
 
     private var currentSortOrder = ImageItem.Companion.SortOrder.DATE_MODIFIED_DESC
     private var imageList: List<ImageItem> = emptyList()
+    private var currentFolder: String? = null
+    private var availableFolders: List<String> = emptyList()
 
     private lateinit var permissionLauncher: ActivityResultLauncher<Array<String>>
 
@@ -65,6 +68,10 @@ class GalleryActivity : AppCompatActivity() {
         initPermissionLauncher()
         repository = MediaStoreRepository(this)
         setupRecyclerView()
+        setupFolderSelector()
+
+        // 默认显示 Screenshots 目录
+        findScreenshotsFolder()
 
         checkPermissionsAndLoad()
     }
@@ -118,6 +125,52 @@ class GalleryActivity : AppCompatActivity() {
         }
     }
 
+    private fun setupFolderSelector() {
+        binding.btnSelectFolder.setOnClickListener {
+            showFolderSelector()
+        }
+    }
+
+    private fun findScreenshotsFolder() {
+        lifecycleScope.launch {
+            try {
+                availableFolders = repository.queryFolders()
+                // 查找 Screenshots 或 截屏 目录
+                currentFolder = availableFolders.firstOrNull { folder ->
+                    folder.contains("Screenshots", ignoreCase = true) ||
+                    folder.contains("截屏", ignoreCase = true) ||
+                    folder.contains("ScreenRecords", ignoreCase = true) ||
+                    folder.contains("录屏", ignoreCase = true)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    private fun showFolderSelector() {
+        lifecycleScope.launch {
+            try {
+                if (availableFolders.isEmpty()) {
+                    availableFolders = repository.queryFolders()
+                }
+
+                val folderNames = mutableListOf("All folders")
+                folderNames.addAll(availableFolders.map { File(it).name })
+
+                androidx.appcompat.app.AlertDialog.Builder(this@GalleryActivity)
+                    .setTitle("Select Folder")
+                    .setItems(folderNames.toTypedArray()) { dialog, which ->
+                        currentFolder = if (which == 0) null else availableFolders[which - 1]
+                        loadImages()
+                    }
+                    .show()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
     private fun loadImages() {
         binding.progressBar.visibility = View.VISIBLE
         binding.recyclerView.visibility = View.GONE
@@ -125,7 +178,7 @@ class GalleryActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             try {
-                imageList = repository.queryImages(currentSortOrder)
+                imageList = repository.queryImages(currentSortOrder, currentFolder)
 
                 if (imageList.isEmpty()) {
                     binding.emptyView.visibility = View.VISIBLE

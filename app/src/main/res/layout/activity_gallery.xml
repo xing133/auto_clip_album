@@ -53,4 +53,15 @@
         android:visibility="gone"
         tools:visibility="visible" />
 
+    <!-- Folder selector button -->
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/btnSelectFolder"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_margin="16dp"
+        android:contentDescription="@string/select_folder"
+        app:srcCompat="@android:drawable/ic_menu_view"
+        app:fabSize="normal" />
+
 </androidx.coordinatorlayout.widget.CoordinatorLayout>

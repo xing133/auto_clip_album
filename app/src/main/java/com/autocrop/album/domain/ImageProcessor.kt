@@ -5,8 +5,11 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.graphics.RectF
+import android.graphics.drawable.BitmapDrawable
 import android.net.Uri
 import androidx.exifinterface.media.ExifInterface
+import com.bumptech.glide.Glide
+import com.bumptech.glide.request.FutureTarget
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -35,57 +38,63 @@ class ImageProcessor(private val context: Context) {
         autoRemoveLetterbox: Boolean = true
     ): Bitmap? = withContext(Dispatchers.IO) {
         try {
-            // 第一次读取：获取图片尺寸
-            val options = BitmapFactory.Options().apply {
-                inJustDecodeBounds = true
+            android.util.Log.d("ImageProcessor", "loadBitmap: uri=$uri, maxDimension=$maxDimension")
+
+            // 使用 Glide 加载图片（避免 Scoped Storage 权限问题）
+            val futureTarget: FutureTarget<Bitmap> = Glide.with(context)
+                .asBitmap()
+                .load(uri)
+                .submit()
+
+            var bitmap = try {
+                futureTarget.get()
+            } catch (e: Exception) {
+                android.util.Log.e("ImageProcessor", "loadBitmap: Glide failed to load", e)
+                null
+            } finally {
+                Glide.with(context).clear(futureTarget)
             }
 
-            context.contentResolver.openInputStream(uri)?.use { inputStream ->
-                BitmapFactory.decodeStream(inputStream, null, options)
-            }
-
-            val originalWidth = options.outWidth
-            val originalHeight = options.outHeight
-
-            if (originalWidth <= 0 || originalHeight <= 0) {
+            if (bitmap == null) {
+                android.util.Log.e("ImageProcessor", "loadBitmap: Failed to load bitmap")
                 return@withContext null
             }
 
-            // 计算缩放比例
-            val maxOriginalDimension = maxOf(originalWidth, originalHeight)
-            val sampleSize = if (maxOriginalDimension > maxDimension) {
-                // 计算2的幂次的采样率
-                var size = 1
-                while (maxOriginalDimension / (size * 2) > maxDimension) {
-                    size *= 2
+            android.util.Log.d("ImageProcessor", "loadBitmap: original size=${bitmap.width}x${bitmap.height}")
+
+            // 创建一个副本，避免影响 Glide 的 bitmap 池
+            var workingBitmap = bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, false)
+
+            // 如果需要缩放
+            if (maxOf(workingBitmap.width, workingBitmap.height) > maxDimension) {
+                val scale = maxDimension.toFloat() / maxOf(workingBitmap.width, workingBitmap.height)
+                val newWidth = (workingBitmap.width * scale).toInt()
+                val newHeight = (workingBitmap.height * scale).toInt()
+                android.util.Log.d("ImageProcessor", "loadBitmap: scaling to ${newWidth}x${newHeight}")
+
+                val scaledBitmap = Bitmap.createScaledBitmap(workingBitmap, newWidth, newHeight, true)
+                if (scaledBitmap != workingBitmap) {
+                    workingBitmap.recycle()
+                    workingBitmap = scaledBitmap
                 }
-                size
-            } else {
-                1
-            }
-
-            // 第二次读取：按采样率加载图片
-            val loadOptions = BitmapFactory.Options().apply {
-                inSampleSize = sampleSize
-                inPreferredConfig = Bitmap.Config.ARGB_8888
-            }
-
-            var bitmap = context.contentResolver.openInputStream(uri)?.use { inputStream ->
-                BitmapFactory.decodeStream(inputStream, null, loadOptions)
             }
 
             // 自动去除黑边（视频截图常见）
-            if (bitmap != null && autoRemoveLetterbox) {
-                val croppedBitmap = LetterboxDetector.detectAndCrop(bitmap)
-                if (croppedBitmap != bitmap) {
+            if (autoRemoveLetterbox) {
+                android.util.Log.d("ImageProcessor", "loadBitmap: detecting letterbox...")
+                val croppedBitmap = LetterboxDetector.detectAndCrop(workingBitmap)
+                android.util.Log.d("ImageProcessor", "loadBitmap: letterbox detection done, cropped=${croppedBitmap != workingBitmap}")
+                if (croppedBitmap != workingBitmap) {
                     // 如果裁剪了黑边，释放原图
-                    bitmap.recycle()
-                    bitmap = croppedBitmap
+                    workingBitmap.recycle()
+                    workingBitmap = croppedBitmap
                 }
             }
 
-            bitmap
+            android.util.Log.d("ImageProcessor", "loadBitmap: final bitmap size=${workingBitmap.width}x${workingBitmap.height}")
+            workingBitmap
         } catch (e: Exception) {
+            android.util.Log.e("ImageProcessor", "loadBitmap: Exception", e)
             e.printStackTrace()
             null
         }

@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.RectF
 import android.net.Uri
 import android.os.Bundle
+import android.provider.MediaStore
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
@@ -212,12 +213,15 @@ class EditorActivity : AppCompatActivity() {
                 val uri = imageUris[currentPosition]
 
                 // 加载图片（降低到 1024 以减少内存压力）
+                android.util.Log.d("EditorActivity", "Loading image from URI: $uri")
                 val bitmap = withContext(Dispatchers.IO) {
                     imageProcessor.loadBitmap(uri, maxDimension = 1024)
                 } ?: run {
+                    android.util.Log.e("EditorActivity", "Failed to load bitmap from URI: $uri")
                     showError("Failed to load image")
                     return@launch
                 }
+                android.util.Log.d("EditorActivity", "Image loaded successfully: ${bitmap.width}x${bitmap.height}")
 
                 currentBitmap = bitmap
 
@@ -456,6 +460,8 @@ class EditorActivity : AppCompatActivity() {
             } else {
                 pendingSaveRequest = null
                 showError(getString(R.string.crop_failed))
+                isProcessing = false
+                showLoading(false)
             }
         }
     }
