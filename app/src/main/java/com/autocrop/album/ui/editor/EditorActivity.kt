@@ -149,6 +149,11 @@ class EditorActivity : AppCompatActivity() {
             finish()
         }
 
+        // 展开/收起保存选项
+        binding.btnExpandOptions.setOnClickListener {
+            toggleSaveOptions()
+        }
+
         // 导航按钮
         binding.btnPrevImage.setOnClickListener {
             if (currentPosition > 0) {
@@ -161,6 +166,17 @@ class EditorActivity : AppCompatActivity() {
                 binding.viewPager.setCurrentItem(currentPosition + 1, true)
             }
         }
+    }
+
+    private fun toggleSaveOptions() {
+        val isVisible = binding.saveOptionsPanel.visibility == View.VISIBLE
+        binding.saveOptionsPanel.visibility = if (isVisible) View.GONE else View.VISIBLE
+
+        // 更新图标方向
+        binding.btnExpandOptions.setImageResource(
+            if (isVisible) android.R.drawable.arrow_up_float
+            else android.R.drawable.arrow_down_float
+        )
     }
 
     private fun updateNavigationButtons() {
