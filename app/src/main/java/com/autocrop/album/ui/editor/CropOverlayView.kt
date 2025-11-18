@@ -2,8 +2,10 @@ package com.autocrop.album.ui.editor
 
 import android.content.Context
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PointF
+import android.graphics.Rect
 import android.graphics.RectF
 import android.util.AttributeSet
 import android.view.MotionEvent
@@ -20,9 +22,10 @@ import kotlin.math.sqrt
 /**
  * 裁剪框覆盖视图
  * 负责绘制：
- * 1. 骨骼关键点和连接线
- * 2. 裁剪框（支持多个）
- * 3. 处理拖动、缩放交互
+ * 1. 黑边 debug 可视化（蓝色半透明矩形）
+ * 2. 骨骼关键点和连接线
+ * 3. 裁剪框（支持多个）
+ * 4. 处理拖动、缩放交互
  */
 class CropOverlayView @JvmOverloads constructor(
     context: Context,
@@ -38,6 +41,9 @@ class CropOverlayView @JvmOverloads constructor(
 
     // 当前选中的裁剪框
     private var selectedCropBox: CropBox? = null
+
+    // 黑边区域列表（用于debug可视化）
+    private var letterboxRegions: List<Rect> = emptyList()
 
     // 图片尺寸（用于坐标转换）
     private var imageWidth: Int = 0
@@ -98,6 +104,12 @@ class CropOverlayView @JvmOverloads constructor(
         style = Paint.Style.FILL
     }
 
+    private val letterboxDebugPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        // 半透明蓝色填充
+        color = Color.argb(120, 0, 100, 255)
+        style = Paint.Style.FILL
+    }
+
     enum class TouchMode {
         NONE, DRAG, RESIZE
     }
@@ -120,6 +132,14 @@ class CropOverlayView @JvmOverloads constructor(
     fun setCropBoxes(boxes: List<CropBox>) {
         cropBoxes = boxes.toMutableList()
         selectedCropBox = boxes.firstOrNull { it.isSelected }
+        invalidate()
+    }
+
+    /**
+     * 设置黑边区域（用于debug可视化）
+     */
+    fun setLetterboxRegions(regions: List<Rect>) {
+        letterboxRegions = regions
         invalidate()
     }
 
@@ -154,17 +174,44 @@ class CropOverlayView @JvmOverloads constructor(
 
         if (imageWidth == 0 || imageHeight == 0) return
 
-        // 1. 绘制骨骼连接线
+        // 1. 绘制黑边 debug 可视化（最先绘制，在底层）
+        drawLetterboxDebug(canvas)
+
+        // 2. 绘制骨骼连接线
         drawPoseConnections(canvas)
 
-        // 2. 绘制骨骼关键点
+        // 3. 绘制骨骼关键点
         drawPoseLandmarks(canvas)
 
-        // 3. 绘制裁剪框
+        // 4. 绘制裁剪框
         drawCropBoxes(canvas)
 
-        // 4. 绘制人物编号
+        // 5. 绘制人物编号
         drawPersonLabels(canvas)
+    }
+
+    /**
+     * 绘制黑边 debug 可视化
+     */
+    private fun drawLetterboxDebug(canvas: Canvas) {
+        if (letterboxRegions.isEmpty()) return
+
+        letterboxRegions.forEach { region ->
+            val viewRect = imageRectToViewRect(region)
+            canvas.drawRect(viewRect, letterboxDebugPaint)
+        }
+    }
+
+    /**
+     * 将图片坐标系的Rect转换为视图坐标系的RectF
+     */
+    private fun imageRectToViewRect(rect: Rect): RectF {
+        return RectF(
+            rect.left * imageScale + imageOffsetX,
+            rect.top * imageScale + imageOffsetY,
+            rect.right * imageScale + imageOffsetX,
+            rect.bottom * imageScale + imageOffsetY
+        )
     }
 
     private fun drawPoseConnections(canvas: Canvas) {

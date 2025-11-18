@@ -212,16 +212,45 @@ class EditorActivity : AppCompatActivity() {
             try {
                 val uri = imageUris[currentPosition]
 
-                // 加载图片（降低到 1024 以减少内存压力）
+                // 检查是否是调试目标图片
+                val debugTargetPath = "/storage/emulated/0/DCIM/Screenshots/Screenshot_2025-10-11-19-58-09-203_com.ss.android.ugc.aweme.jpg"
+                val isDebugTarget = withContext(Dispatchers.IO) {
+                    try {
+                        val cursor = contentResolver.query(uri, arrayOf(android.provider.MediaStore.Images.Media.DATA), null, null, null)
+                        val actualPath = cursor?.use {
+                            if (it.moveToFirst()) {
+                                it.getString(0)
+                            } else null
+                        }
+                        actualPath == debugTargetPath
+                    } catch (e: Exception) {
+                        false
+                    }
+                }
+
+                // 如果是调试目标，启用详细调试模式
+                if (isDebugTarget) {
+                    android.util.Log.w("EditorActivity", "⚠️ DEBUG TARGET DETECTED! Enabling VERBOSE_DEBUG_MODE")
+                    com.autocrop.album.domain.LetterboxDetector.VERBOSE_DEBUG_MODE = true
+                } else {
+                    com.autocrop.album.domain.LetterboxDetector.VERBOSE_DEBUG_MODE = false
+                }
+
+                // 加载图片并获取黑边检测信息（降低到 1024 以减少内存压力）
                 android.util.Log.d("EditorActivity", "Loading image from URI: $uri")
-                val bitmap = withContext(Dispatchers.IO) {
-                    imageProcessor.loadBitmap(uri, maxDimension = 1024)
+                val bitmapWithInfo = withContext(Dispatchers.IO) {
+                    imageProcessor.loadBitmapWithLetterboxInfo(uri, maxDimension = 1024)
                 } ?: run {
                     android.util.Log.e("EditorActivity", "Failed to load bitmap from URI: $uri")
                     showError("Failed to load image")
                     return@launch
                 }
+
+                val bitmap = bitmapWithInfo.bitmap
+                val letterboxResult = bitmapWithInfo.letterboxResult
+
                 android.util.Log.d("EditorActivity", "Image loaded successfully: ${bitmap.width}x${bitmap.height}")
+                android.util.Log.d("EditorActivity", "Letterbox regions: ${letterboxResult?.letterboxRegions?.size ?: 0}")
 
                 currentBitmap = bitmap
 
@@ -239,7 +268,7 @@ class EditorActivity : AppCompatActivity() {
 
                 // 更新 UI
                 withContext(Dispatchers.Main) {
-                    updateOverlayView(pageBinding, persons)
+                    updateOverlayView(pageBinding, persons, letterboxResult?.letterboxRegions ?: emptyList())
 
                     if (persons.isEmpty()) {
                         // 自动创建一个手动裁剪框
@@ -259,7 +288,11 @@ class EditorActivity : AppCompatActivity() {
         }
     }
 
-    private fun updateOverlayView(pageBinding: PageEditorImageBinding, persons: List<Any>) {
+    private fun updateOverlayView(
+        pageBinding: PageEditorImageBinding,
+        persons: List<Any>,
+        letterboxRegions: List<android.graphics.Rect> = emptyList()
+    ) {
         val imageView = pageBinding.imageView
         val overlayView = pageBinding.cropOverlayView
 
@@ -290,6 +323,9 @@ class EditorActivity : AppCompatActivity() {
 
             // 设置变换信息
             overlayView.setImageTransform(imageWidth, imageHeight, offsetX, offsetY, scale)
+
+            // 设置黑边区域（debug可视化）
+            overlayView.setLetterboxRegions(letterboxRegions)
 
             // 设置检测数据
             if (persons.isNotEmpty()) {

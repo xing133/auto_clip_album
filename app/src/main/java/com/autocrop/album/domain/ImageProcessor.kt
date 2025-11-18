@@ -23,6 +23,14 @@ import java.io.InputStream
 class ImageProcessor(private val context: Context) {
 
     /**
+     * 带有黑边检测信息的Bitmap数据类
+     */
+    data class BitmapWithLetterboxInfo(
+        val bitmap: Bitmap,
+        val letterboxResult: LetterboxDetector.DetectionResult?
+    )
+
+    /**
      * 从 URI 加载 Bitmap
      */
     /**
@@ -95,6 +103,65 @@ class ImageProcessor(private val context: Context) {
             workingBitmap
         } catch (e: Exception) {
             android.util.Log.e("ImageProcessor", "loadBitmap: Exception", e)
+            e.printStackTrace()
+            null
+        }
+    }
+
+    /**
+     * 加载图片并返回黑边检测信息（用于预览和debug）
+     * @param uri 图片 URI
+     * @param maxDimension 最大边长（像素），默认 2048
+     * @return BitmapWithLetterboxInfo 或 null
+     */
+    suspend fun loadBitmapWithLetterboxInfo(
+        uri: Uri,
+        maxDimension: Int = 2048
+    ): BitmapWithLetterboxInfo? = withContext(Dispatchers.IO) {
+        try {
+            android.util.Log.d("ImageProcessor", "loadBitmapWithLetterboxInfo: uri=$uri")
+
+            // 使用 Glide 加载图片
+            val futureTarget: FutureTarget<Bitmap> = Glide.with(context)
+                .asBitmap()
+                .load(uri)
+                .submit()
+
+            var bitmap = try {
+                futureTarget.get()
+            } catch (e: Exception) {
+                android.util.Log.e("ImageProcessor", "loadBitmapWithLetterboxInfo: Glide failed", e)
+                null
+            } finally {
+                Glide.with(context).clear(futureTarget)
+            }
+
+            if (bitmap == null) {
+                return@withContext null
+            }
+
+            // 创建副本
+            var workingBitmap = bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, false)
+
+            // 缩放（如果需要）
+            if (maxOf(workingBitmap.width, workingBitmap.height) > maxDimension) {
+                val scale = maxDimension.toFloat() / maxOf(workingBitmap.width, workingBitmap.height)
+                val newWidth = (workingBitmap.width * scale).toInt()
+                val newHeight = (workingBitmap.height * scale).toInt()
+                val scaledBitmap = Bitmap.createScaledBitmap(workingBitmap, newWidth, newHeight, true)
+                if (scaledBitmap != workingBitmap) {
+                    workingBitmap.recycle()
+                    workingBitmap = scaledBitmap
+                }
+            }
+
+            // 检测黑边（但不裁剪）
+            val detectionResult = LetterboxDetector.detect(workingBitmap)
+            android.util.Log.d("ImageProcessor", "loadBitmapWithLetterboxInfo: detected ${detectionResult.letterboxRegions.size} letterbox regions")
+
+            BitmapWithLetterboxInfo(workingBitmap, detectionResult)
+        } catch (e: Exception) {
+            android.util.Log.e("ImageProcessor", "loadBitmapWithLetterboxInfo: Exception", e)
             e.printStackTrace()
             null
         }
