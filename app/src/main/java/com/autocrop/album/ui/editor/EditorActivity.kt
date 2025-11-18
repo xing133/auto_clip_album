@@ -257,9 +257,9 @@ class EditorActivity : AppCompatActivity() {
                 // 检测姿态
                 val persons = poseDetector.detectPose(bitmap)
 
-                // 生成裁剪框
+                // 生成裁剪框（传入黑边信息，确保裁剪框不包含黑边）
                 currentCropBoxes = if (persons.isNotEmpty()) {
-                    CropCalculator.generateCropBoxes(persons, bitmap.width, bitmap.height)
+                    CropCalculator.generateCropBoxes(persons, bitmap.width, bitmap.height, letterboxResult)
                 } else {
                     // 没有检测到人物，显示提示
                     showStatus(getString(R.string.no_person_detected))

@@ -110,6 +110,9 @@ class CropOverlayView @JvmOverloads constructor(
         style = Paint.Style.FILL
     }
 
+    // 黑边可视化开关（默认显示）
+    var showLetterboxDebug: Boolean = true
+
     enum class TouchMode {
         NONE, DRAG, RESIZE
     }
@@ -194,7 +197,7 @@ class CropOverlayView @JvmOverloads constructor(
      * 绘制黑边 debug 可视化
      */
     private fun drawLetterboxDebug(canvas: Canvas) {
-        if (letterboxRegions.isEmpty()) return
+        if (!showLetterboxDebug || letterboxRegions.isEmpty()) return
 
         letterboxRegions.forEach { region ->
             val viewRect = imageRectToViewRect(region)

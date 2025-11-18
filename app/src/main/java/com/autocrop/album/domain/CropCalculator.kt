@@ -1,5 +1,6 @@
 package com.autocrop.album.domain
 
+import android.graphics.Rect
 import android.graphics.RectF
 import com.autocrop.album.data.models.CropBox
 import com.autocrop.album.data.models.DetectedPerson
@@ -42,15 +43,17 @@ object CropCalculator {
      * @param persons 检测到的人物列表
      * @param imageWidth 图片宽度
      * @param imageHeight 图片高度
+     * @param letterboxResult 黑边检测结果（可选），用于确保裁剪框不包含黑边
      * @return 裁剪框列表
      */
     fun generateCropBoxes(
         persons: List<DetectedPerson>,
         imageWidth: Int,
-        imageHeight: Int
+        imageHeight: Int,
+        letterboxResult: LetterboxDetector.DetectionResult? = null
     ): List<CropBox> {
         return persons.mapIndexed { index, person ->
-            val rect = calculateCropRect(person, imageWidth, imageHeight)
+            val rect = calculateCropRect(person, imageWidth, imageHeight, letterboxResult)
             CropBox(
                 id = index,
                 rect = rect,
@@ -67,7 +70,8 @@ object CropCalculator {
     private fun calculateCropRect(
         person: DetectedPerson,
         imageWidth: Int,
-        imageHeight: Int
+        imageHeight: Int,
+        letterboxResult: LetterboxDetector.DetectionResult? = null
     ): RectF {
         var rect = RectF(person.boundingBox)
 
@@ -84,6 +88,11 @@ object CropCalculator {
 
         // 3. 确保不超出图片边界
         rect = constrainToImageBounds(rect, imageWidth, imageHeight)
+
+        // 4. 确保不包含黑边区域
+        if (letterboxResult != null) {
+            rect = avoidLetterboxRegions(rect, letterboxResult, imageWidth, imageHeight)
+        }
 
         return rect
     }
@@ -174,6 +183,76 @@ object CropCalculator {
         result.bottom = min(imageHeight.toFloat(), result.bottom)
 
         return result
+    }
+
+    /**
+     * 调整裁剪框以避免黑边区域
+     * 使用黑边检测结果的 trimmedRatios 来缩小裁剪框，确保不包含黑边
+     */
+    private fun avoidLetterboxRegions(
+        rect: RectF,
+        letterboxResult: LetterboxDetector.DetectionResult,
+        imageWidth: Int,
+        imageHeight: Int
+    ): RectF {
+        val ratios = letterboxResult.trimmedRatios
+
+        // 计算有效内容区域（去除黑边后的区域）
+        val contentLeft = imageWidth * ratios.left
+        val contentTop = imageHeight * ratios.top
+        val contentRight = imageWidth * (1f - ratios.right)
+        val contentBottom = imageHeight * (1f - ratios.bottom)
+
+        // 将裁剪框约束到有效内容区域内
+        val adjustedRect = RectF(rect)
+
+        // 左边：如果裁剪框左边界在黑边区域内，移动到内容区域
+        if (adjustedRect.left < contentLeft) {
+            val shift = contentLeft - adjustedRect.left
+            adjustedRect.left = contentLeft
+            // 如果可能，保持宽度不变
+            if (adjustedRect.right + shift <= contentRight) {
+                adjustedRect.right += shift
+            }
+        }
+
+        // 右边：如果裁剪框右边界在黑边区域内，移动到内容区域
+        if (adjustedRect.right > contentRight) {
+            val shift = adjustedRect.right - contentRight
+            adjustedRect.right = contentRight
+            // 如果可能，保持宽度不变
+            if (adjustedRect.left - shift >= contentLeft) {
+                adjustedRect.left -= shift
+            }
+        }
+
+        // 上边：如果裁剪框上边界在黑边区域内，移动到内容区域
+        if (adjustedRect.top < contentTop) {
+            val shift = contentTop - adjustedRect.top
+            adjustedRect.top = contentTop
+            // 如果可能，保持高度不变
+            if (adjustedRect.bottom + shift <= contentBottom) {
+                adjustedRect.bottom += shift
+            }
+        }
+
+        // 下边：如果裁剪框下边界在黑边区域内，移动到内容区域
+        if (adjustedRect.bottom > contentBottom) {
+            val shift = adjustedRect.bottom - contentBottom
+            adjustedRect.bottom = contentBottom
+            // 如果可能，保持高度不变
+            if (adjustedRect.top - shift >= contentTop) {
+                adjustedRect.top -= shift
+            }
+        }
+
+        // 确保调整后的矩形仍然有效
+        if (adjustedRect.width() <= 0 || adjustedRect.height() <= 0) {
+            // 如果调整后无效，返回整个有效内容区域
+            return RectF(contentLeft, contentTop, contentRight, contentBottom)
+        }
+
+        return adjustedRect
     }
 
     /**
