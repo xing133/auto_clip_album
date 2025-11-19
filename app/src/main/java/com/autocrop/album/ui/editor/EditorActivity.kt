@@ -23,6 +23,7 @@ import com.autocrop.album.data.ImageDataHolder
 import com.autocrop.album.data.MediaStoreRepository
 import com.autocrop.album.data.models.CropBox
 import com.autocrop.album.data.MediaStoreRepository.SaveImageResult
+import com.autocrop.album.data.MediaStoreRepository.DeleteImageResult
 import com.autocrop.album.databinding.ActivityEditorBinding
 import com.autocrop.album.databinding.PageEditorImageBinding
 import com.autocrop.album.domain.CropCalculator
@@ -54,7 +55,9 @@ class EditorActivity : AppCompatActivity() {
     private var isProcessing = false
     private var isPoseDetectorReady = false
     private lateinit var editPermissionLauncher: ActivityResultLauncher<IntentSenderRequest>
+    private lateinit var deletePermissionLauncher: ActivityResultLauncher<IntentSenderRequest>
     private var pendingSaveRequest: PendingSaveRequest? = null
+    private var pendingDeleteUri: Uri? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -66,6 +69,7 @@ class EditorActivity : AppCompatActivity() {
         imageProcessor = ImageProcessor(this)
         repository = MediaStoreRepository(this)
         registerEditPermissionLauncher()
+        registerDeletePermissionLauncher()
 
         // 从 ImageDataHolder 获取图片列表，避免 Intent 传递大数据
         imageUris = ImageDataHolder.getImageUris()
@@ -147,7 +151,7 @@ class EditorActivity : AppCompatActivity() {
         }
 
         binding.btnCancel.setOnClickListener {
-            finish()
+            deleteCurrentImage()
         }
 
         // 展开/收起保存选项
@@ -478,6 +482,21 @@ class EditorActivity : AppCompatActivity() {
         }
     }
 
+    private fun registerDeletePermissionLauncher() {
+        deletePermissionLauncher = registerForActivityResult(
+            ActivityResultContracts.StartIntentSenderForResult()
+        ) { result ->
+            if (result.resultCode == Activity.RESULT_OK) {
+                retryPendingDelete()
+            } else {
+                pendingDeleteUri = null
+                showError("Delete cancelled")
+                isProcessing = false
+                showLoading(false)
+            }
+        }
+    }
+
     private fun requestWritePermission(intentSender: IntentSender) {
         val request = IntentSenderRequest.Builder(intentSender).build()
         showStatus(getString(R.string.permission_required))
@@ -558,6 +577,129 @@ class EditorActivity : AppCompatActivity() {
     companion object {
         const val EXTRA_IMAGE_URIS = "extra_image_uris"
         const val EXTRA_IMAGE_POSITION = "extra_image_position"
+    }
+
+    private fun deleteCurrentImage() {
+        if (isProcessing) return
+        if (imageUris.isEmpty()) return
+
+        lifecycleScope.launch {
+            isProcessing = true
+            showLoading(true, "Deleting image...")
+
+            try {
+                val uri = imageUris[currentPosition]
+
+                when (val result = repository.deleteImage(uri)) {
+                    is DeleteImageResult.Success -> {
+                        pendingDeleteUri = null
+                        handleDeleteSuccess()
+                    }
+                    is DeleteImageResult.RequiresPermission -> {
+                        pendingDeleteUri = uri
+                        showLoading(false)
+                        isProcessing = false
+                        requestDeletePermission(result.intentSender)
+                        return@launch
+                    }
+                    is DeleteImageResult.Error -> {
+                        pendingDeleteUri = null
+                        showError("Failed to delete image")
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                showError("Delete error: ${e.message}")
+            } finally {
+                isProcessing = false
+                showLoading(false)
+            }
+        }
+    }
+
+    private fun handleDeleteSuccess() {
+        showStatus("Image deleted")
+
+        // 从列表中移除当前图片
+        val mutableUris = imageUris.toMutableList()
+        mutableUris.removeAt(currentPosition)
+
+        // 更新 ImageDataHolder
+        ImageDataHolder.setImageUris(mutableUris)
+        imageUris = mutableUris
+
+        // 如果列表为空,关闭 Activity
+        if (imageUris.isEmpty()) {
+            Toast.makeText(this, "No more images", Toast.LENGTH_SHORT).show()
+            finish()
+            return
+        }
+
+        // 如果删除的是最后一张,跳转到前一张
+        val newPosition = if (currentPosition >= imageUris.size) {
+            imageUris.size - 1
+        } else {
+            currentPosition
+        }
+
+        // 清理当前状态
+        currentCropBoxes = emptyList()
+        currentBitmap?.recycle()
+        currentBitmap = null
+
+        // 更新 adapter 并跳转
+        adapter = ImagePagerAdapter(imageUris) { _, _ -> }
+        binding.viewPager.adapter = adapter
+        binding.viewPager.setCurrentItem(newPosition, false)
+        currentPosition = newPosition
+
+        // 更新导航按钮
+        updateNavigationButtons()
+
+        // 处理新图片
+        if (isPoseDetectorReady) {
+            binding.viewPager.post {
+                val viewHolder = (binding.viewPager.getChildAt(0) as? androidx.recyclerview.widget.RecyclerView)
+                    ?.findViewHolderForAdapterPosition(newPosition) as? ImagePagerAdapter.ImagePageViewHolder
+
+                viewHolder?.getBinding()?.let { pageBinding ->
+                    processCurrentImage(pageBinding)
+                }
+            }
+        }
+    }
+
+    private fun requestDeletePermission(intentSender: IntentSender) {
+        val request = IntentSenderRequest.Builder(intentSender).build()
+        showStatus("Permission required to delete")
+        deletePermissionLauncher.launch(request)
+    }
+
+    private fun retryPendingDelete() {
+        val uri = pendingDeleteUri ?: return
+        lifecycleScope.launch {
+            isProcessing = true
+            showLoading(true, "Deleting image...")
+            try {
+                when (val result = repository.deleteImage(uri)) {
+                    is DeleteImageResult.Success -> {
+                        pendingDeleteUri = null
+                        handleDeleteSuccess()
+                    }
+                    is DeleteImageResult.RequiresPermission -> {
+                        requestDeletePermission(result.intentSender)
+                        return@launch
+                    }
+                    is DeleteImageResult.Error -> {
+                        pendingDeleteUri = null
+                        showError("Failed to delete image")
+                    }
+                }
+            } finally {
+                isProcessing = false
+                showLoading(false)
+            }
+        }
     }
 
     private data class PendingSaveRequest(

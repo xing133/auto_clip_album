@@ -249,8 +249,8 @@ class ImageProcessor(private val context: Context) {
         previewHeight: Int = 0
     ): Boolean = withContext(Dispatchers.IO) {
         try {
-            // 加载原图（不限制尺寸，也要去黑边，保持和预览图一致）
-            val bitmap = loadBitmap(sourceUri, maxDimension = Int.MAX_VALUE, autoRemoveLetterbox = true) ?: return@withContext false
+            // 加载原图（不限制尺寸，保持黑边以确保和预览图坐标系一致）
+            val bitmap = loadBitmap(sourceUri, maxDimension = Int.MAX_VALUE, autoRemoveLetterbox = false) ?: return@withContext false
 
             android.util.Log.d("ImageProcessor", "cropAndSave: original bitmap size=${bitmap.width}x${bitmap.height}")
             android.util.Log.d("ImageProcessor", "cropAndSave: preview size=${previewWidth}x${previewHeight}")

@@ -31,7 +31,7 @@ class GalleryActivity : AppCompatActivity() {
     private lateinit var repository: MediaStoreRepository
     private lateinit var adapter: GalleryAdapter
 
-    private var currentSortOrder = ImageItem.Companion.SortOrder.DATE_MODIFIED_DESC
+    private var currentSortOrder = ImageItem.Companion.SortOrder.NAME_ASC
     private var imageList: List<ImageItem> = emptyList()
     private var currentFolder: String? = null
     private var availableFolders: List<String> = emptyList()
@@ -87,12 +87,15 @@ class GalleryActivity : AppCompatActivity() {
                 try {
                     android.util.Log.d("GalleryActivity", "Clearing Glide cache and reloading images...")
 
-                    // 先清除磁盘缓存（后台线程）
+                    // 先清空 adapter，强制重新绑定所有 item
+                    adapter.submitList(null)
+
+                    // 清除磁盘缓存（后台线程）
                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                         com.bumptech.glide.Glide.get(this@GalleryActivity).clearDiskCache()
                     }
 
-                    // 再清除内存缓存（主线程）
+                    // 清除内存缓存（主线程）
                     com.bumptech.glide.Glide.get(this@GalleryActivity).clearMemory()
 
                     android.util.Log.d("GalleryActivity", "Cache cleared, reloading images...")

@@ -8,6 +8,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.autocrop.album.data.models.ImageItem
 import com.autocrop.album.databinding.ItemGalleryImageBinding
 import com.bumptech.glide.Glide
+import com.bumptech.glide.load.engine.DiskCacheStrategy
 import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions
 import com.bumptech.glide.signature.ObjectKey
 
@@ -37,11 +38,12 @@ class GalleryAdapter(
     ) : RecyclerView.ViewHolder(binding.root) {
 
         fun bind(item: ImageItem, position: Int) {
-            // 使用图片的修改时间作为签名，确保文件修改后缓存会更新
+            // 使用图片的ID和修改时间作为签名，确保文件删除/修改后缓存会更新
             Glide.with(binding.imageView)
                 .load(item.uri)
-                .centerCrop()
-                .signature(ObjectKey("${item.uri}_${item.dateModified}"))
+                .fitCenter()  // 显示完整图片，不裁剪
+                .signature(ObjectKey("${item.id}_${item.dateModified.time}"))
+                .skipMemoryCache(true)  // 跳过内存缓存，确保每次从磁盘重新加载
                 .transition(DrawableTransitionOptions.withCrossFade())
                 .into(binding.imageView)
 

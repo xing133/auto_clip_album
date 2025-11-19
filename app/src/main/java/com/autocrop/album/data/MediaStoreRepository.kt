@@ -26,6 +26,12 @@ class MediaStoreRepository(private val context: Context) {
         data class Error(val throwable: Throwable? = null) : SaveImageResult()
     }
 
+    sealed class DeleteImageResult {
+        object Success : DeleteImageResult()
+        data class RequiresPermission(val intentSender: IntentSender) : DeleteImageResult()
+        data class Error(val throwable: Throwable? = null) : DeleteImageResult()
+    }
+
     private val contentResolver: ContentResolver = context.contentResolver
 
     /**
@@ -317,6 +323,33 @@ class MediaStoreRepository(private val context: Context) {
             android.util.Log.e("MediaStoreRepository", "insertImageToMediaStore: exception", e)
             e.printStackTrace()
             return null
+        }
+    }
+
+    /**
+     * 删除图片
+     * @param uri 要删除的图片 URI
+     * @return 删除结果
+     */
+    suspend fun deleteImage(uri: Uri): DeleteImageResult = withContext(Dispatchers.IO) {
+        try {
+            android.util.Log.d("MediaStoreRepository", "deleteImage: uri=$uri")
+
+            val deletedRows = contentResolver.delete(uri, null, null)
+
+            if (deletedRows > 0) {
+                android.util.Log.d("MediaStoreRepository", "deleteImage: success, deleted $deletedRows rows")
+                DeleteImageResult.Success
+            } else {
+                android.util.Log.e("MediaStoreRepository", "deleteImage: failed, no rows deleted")
+                DeleteImageResult.Error(IOException("No rows deleted"))
+            }
+        } catch (e: RecoverableSecurityException) {
+            android.util.Log.d("MediaStoreRepository", "deleteImage: RecoverableSecurityException, requires permission")
+            DeleteImageResult.RequiresPermission(e.userAction.actionIntent.intentSender)
+        } catch (e: Exception) {
+            android.util.Log.e("MediaStoreRepository", "deleteImage: exception", e)
+            DeleteImageResult.Error(e)
         }
     }
 
