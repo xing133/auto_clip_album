@@ -29,7 +29,7 @@ class GalleryAdapter(
     }
 
     override fun onBindViewHolder(holder: ImageViewHolder, position: Int) {
-        holder.bind(getItem(position), position)
+        holder.bind(getItem(position))
     }
 
     class ImageViewHolder(
@@ -37,7 +37,7 @@ class GalleryAdapter(
         private val onItemClick: (ImageItem, Int) -> Unit
     ) : RecyclerView.ViewHolder(binding.root) {
 
-        fun bind(item: ImageItem, position: Int) {
+        fun bind(item: ImageItem) {
             // 使用图片的ID和修改时间作为签名，确保文件删除/修改后缓存会更新
             Glide.with(binding.imageView)
                 .load(item.uri)
@@ -48,7 +48,12 @@ class GalleryAdapter(
                 .into(binding.imageView)
 
             binding.cardView.setOnClickListener {
-                onItemClick(item, position)
+                // 使用 bindingAdapterPosition 获取当前实际位置，而不是 bind 时的 position
+                // 这样可以避免 ViewHolder 复用时位置错误的问题
+                val currentPosition = bindingAdapterPosition
+                if (currentPosition != RecyclerView.NO_POSITION) {
+                    onItemClick(item, currentPosition)
+                }
             }
         }
     }

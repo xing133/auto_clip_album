@@ -83,6 +83,9 @@ class GalleryActivity : AppCompatActivity() {
 
                     if (newImageList != imageList) {
                         imageList = newImageList
+                        // 清除 RecyclerView 的缓存池，避免删除文件后出现错位
+                        // 特别是网格布局（3列），缓存的 ViewHolder 可能持有旧的图片引用
+                        binding.recyclerView.recycledViewPool.clear()
                         // 使用 submitList，DiffUtil 会智能保持滚动位置
                         // 不手动调用 scrollToPosition，让 RecyclerView 自然保持状态
                         adapter.submitList(imageList)
