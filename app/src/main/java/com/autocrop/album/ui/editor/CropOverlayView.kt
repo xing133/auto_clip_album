@@ -118,7 +118,12 @@ class CropOverlayView @JvmOverloads constructor(
     }
 
     enum class Corner {
-        TOP_LEFT, TOP_RIGHT, BOTTOM_LEFT, BOTTOM_RIGHT, NONE
+        // 角点
+        TOP_LEFT, TOP_RIGHT, BOTTOM_LEFT, BOTTOM_RIGHT,
+        // 边缘
+        TOP, BOTTOM, LEFT, RIGHT,
+        // 无
+        NONE
     }
 
     /**
@@ -418,13 +423,39 @@ class CropOverlayView @JvmOverloads constructor(
     }
 
     private fun findTouchedCorner(point: PointF, rect: RectF): Corner {
-        val touchRadius = 60f
+        val cornerTouchRadius = 60f
+        val edgeTouchDistance = 40f
 
+        // 首先检查角点（优先级更高）
+        when {
+            distance(point, PointF(rect.left, rect.top)) < cornerTouchRadius -> return Corner.TOP_LEFT
+            distance(point, PointF(rect.right, rect.top)) < cornerTouchRadius -> return Corner.TOP_RIGHT
+            distance(point, PointF(rect.left, rect.bottom)) < cornerTouchRadius -> return Corner.BOTTOM_LEFT
+            distance(point, PointF(rect.right, rect.bottom)) < cornerTouchRadius -> return Corner.BOTTOM_RIGHT
+        }
+
+        // 然后检查边缘
         return when {
-            distance(point, PointF(rect.left, rect.top)) < touchRadius -> Corner.TOP_LEFT
-            distance(point, PointF(rect.right, rect.top)) < touchRadius -> Corner.TOP_RIGHT
-            distance(point, PointF(rect.left, rect.bottom)) < touchRadius -> Corner.BOTTOM_LEFT
-            distance(point, PointF(rect.right, rect.bottom)) < touchRadius -> Corner.BOTTOM_RIGHT
+            // 上边缘
+            point.y >= rect.top - edgeTouchDistance &&
+            point.y <= rect.top + edgeTouchDistance &&
+            point.x >= rect.left && point.x <= rect.right -> Corner.TOP
+
+            // 下边缘
+            point.y >= rect.bottom - edgeTouchDistance &&
+            point.y <= rect.bottom + edgeTouchDistance &&
+            point.x >= rect.left && point.x <= rect.right -> Corner.BOTTOM
+
+            // 左边缘
+            point.x >= rect.left - edgeTouchDistance &&
+            point.x <= rect.left + edgeTouchDistance &&
+            point.y >= rect.top && point.y <= rect.bottom -> Corner.LEFT
+
+            // 右边缘
+            point.x >= rect.right - edgeTouchDistance &&
+            point.x <= rect.right + edgeTouchDistance &&
+            point.y >= rect.top && point.y <= rect.bottom -> Corner.RIGHT
+
             else -> Corner.NONE
         }
     }
@@ -432,6 +463,7 @@ class CropOverlayView @JvmOverloads constructor(
     private fun resizeCropRect(original: RectF, corner: Corner, dx: Float, dy: Float): RectF {
         return RectF(original).apply {
             when (corner) {
+                // 角点：同时调整两条边
                 Corner.TOP_LEFT -> {
                     left += dx
                     top += dy
@@ -447,6 +479,19 @@ class CropOverlayView @JvmOverloads constructor(
                 Corner.BOTTOM_RIGHT -> {
                     right += dx
                     bottom += dy
+                }
+                // 边缘：只调整一条边
+                Corner.TOP -> {
+                    top += dy
+                }
+                Corner.BOTTOM -> {
+                    bottom += dy
+                }
+                Corner.LEFT -> {
+                    left += dx
+                }
+                Corner.RIGHT -> {
+                    right += dx
                 }
                 Corner.NONE -> {}
             }

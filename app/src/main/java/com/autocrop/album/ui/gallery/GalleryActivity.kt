@@ -37,6 +37,7 @@ class GalleryActivity : AppCompatActivity() {
     private var availableFolders: List<String> = emptyList()
 
     private lateinit var permissionLauncher: ActivityResultLauncher<Array<String>>
+    private lateinit var editorLauncher: ActivityResultLauncher<Intent>
 
     private fun initPermissionLauncher() {
         permissionLauncher = registerForActivityResult(
@@ -60,6 +61,38 @@ class GalleryActivity : AppCompatActivity() {
         }
     }
 
+    private fun initEditorLauncher() {
+        editorLauncher = registerForActivityResult(
+            ActivityResultContracts.StartActivityForResult()
+        ) { result ->
+            if (result.resultCode == RESULT_OK) {
+                // 图片被修改/删除，清除 Glide 缓存并重新查询列表
+                lifecycleScope.launch {
+                    // 清除 Glide 缓存
+                    try {
+                        withContext(Dispatchers.IO) {
+                            com.bumptech.glide.Glide.get(this@GalleryActivity).clearDiskCache()
+                        }
+                        com.bumptech.glide.Glide.get(this@GalleryActivity).clearMemory()
+                    } catch (e: Exception) {
+                        android.util.Log.e("GalleryActivity", "Error clearing cache", e)
+                    }
+
+                    // 重新查询列表以获取最新的 MediaStore 数据
+                    val newImageList = repository.queryImages(currentSortOrder, currentFolder)
+
+                    if (newImageList != imageList) {
+                        imageList = newImageList
+                        // 使用 submitList，DiffUtil 会智能保持滚动位置
+                        // 不手动调用 scrollToPosition，让 RecyclerView 自然保持状态
+                        adapter.submitList(imageList)
+                    }
+                }
+            }
+            // 如果 resultCode != RESULT_OK，说明没有修改，Gallery 自然保持原状态
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityGalleryBinding.inflate(layoutInflater)
@@ -68,6 +101,7 @@ class GalleryActivity : AppCompatActivity() {
         setSupportActionBar(binding.toolbar)
 
         initPermissionLauncher()
+        initEditorLauncher()
         repository = MediaStoreRepository(this)
         setupRecyclerView()
         setupFolderSelector()
@@ -78,37 +112,7 @@ class GalleryActivity : AppCompatActivity() {
         checkPermissionsAndLoad()
     }
 
-    override fun onResume() {
-        super.onResume()
-        // 从编辑页面返回时刷新列表
-        if (PermissionHelper.hasPermissions(this)) {
-            // 清除 Glide 缓存并重新加载图片列表，确保显示最新的图片
-            lifecycleScope.launch {
-                try {
-                    android.util.Log.d("GalleryActivity", "Clearing Glide cache and reloading images...")
-
-                    // 先清空 adapter，强制重新绑定所有 item
-                    adapter.submitList(null)
-
-                    // 清除磁盘缓存（后台线程）
-                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                        com.bumptech.glide.Glide.get(this@GalleryActivity).clearDiskCache()
-                    }
-
-                    // 清除内存缓存（主线程）
-                    com.bumptech.glide.Glide.get(this@GalleryActivity).clearMemory()
-
-                    android.util.Log.d("GalleryActivity", "Cache cleared, reloading images...")
-                } catch (e: Exception) {
-                    android.util.Log.e("GalleryActivity", "Error clearing cache", e)
-                    e.printStackTrace()
-                }
-
-                // 重新加载图片列表（这会刷新 MediaStore 数据，包括新的 dateModified）
-                loadImages()
-            }
-        }
-    }
+    // 移除 onResume 中的逻辑，让 Gallery 自然保持状态
 
     private fun setupRecyclerView() {
         adapter = GalleryAdapter { imageItem, position ->
@@ -182,9 +186,12 @@ class GalleryActivity : AppCompatActivity() {
     }
 
     private fun loadImages() {
-        binding.progressBar.visibility = View.VISIBLE
-        binding.recyclerView.visibility = View.GONE
-        binding.emptyView.visibility = View.GONE
+        // 只在没有数据时显示进度条，避免闪烁
+        if (imageList.isEmpty()) {
+            binding.progressBar.visibility = View.VISIBLE
+            binding.recyclerView.visibility = View.GONE
+            binding.emptyView.visibility = View.GONE
+        }
 
         lifecycleScope.launch {
             try {
@@ -192,13 +199,16 @@ class GalleryActivity : AppCompatActivity() {
 
                 if (imageList.isEmpty()) {
                     binding.emptyView.visibility = View.VISIBLE
+                    binding.recyclerView.visibility = View.GONE
                 } else {
                     binding.recyclerView.visibility = View.VISIBLE
+                    binding.emptyView.visibility = View.GONE
                     adapter.submitList(imageList)
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
                 binding.emptyView.visibility = View.VISIBLE
+                binding.recyclerView.visibility = View.GONE
                 binding.emptyView.text = getString(R.string.error_occurred)
             } finally {
                 binding.progressBar.visibility = View.GONE
@@ -213,7 +223,7 @@ class GalleryActivity : AppCompatActivity() {
         val intent = Intent(this, EditorActivity::class.java).apply {
             putExtra(EditorActivity.EXTRA_IMAGE_POSITION, position)
         }
-        startActivity(intent)
+        editorLauncher.launch(intent)
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {

@@ -1,6 +1,7 @@
 package com.autocrop.album.ui.editor
 
 import android.app.Activity
+import android.content.Intent
 import android.content.IntentSender
 import android.graphics.Bitmap
 import android.graphics.RectF
@@ -49,6 +50,9 @@ class EditorActivity : AppCompatActivity() {
     private var imageUris: List<Uri> = emptyList()
     private var currentPosition: Int = 0
     private var currentCropBoxes: List<CropBox> = emptyList()
+
+    // 标记图片是否被修改（保存/删除），用于返回结果给 Gallery
+    private var hasModified: Boolean = false
     private var currentBitmap: Bitmap? = null
 
     private lateinit var gestureDetector: GestureDetectorCompat
@@ -425,6 +429,10 @@ class EditorActivity : AppCompatActivity() {
     private fun handleSaveSuccess(overwriteOriginal: Boolean) {
         showStatus(getString(R.string.crop_success))
         Toast.makeText(this@EditorActivity, getString(R.string.crop_success), Toast.LENGTH_SHORT).show()
+
+        // 标记图片已修改
+        hasModified = true
+
         if (overwriteOriginal) {
             reloadCurrentPreview()
         }
@@ -620,6 +628,9 @@ class EditorActivity : AppCompatActivity() {
     private fun handleDeleteSuccess() {
         showStatus("Image deleted")
 
+        // 标记图片已修改
+        hasModified = true
+
         // 从列表中移除当前图片
         val mutableUris = imageUris.toMutableList()
         mutableUris.removeAt(currentPosition)
@@ -628,9 +639,10 @@ class EditorActivity : AppCompatActivity() {
         ImageDataHolder.setImageUris(mutableUris)
         imageUris = mutableUris
 
-        // 如果列表为空,关闭 Activity
+        // 如果列表为空,关闭 Activity 并返回结果
         if (imageUris.isEmpty()) {
             Toast.makeText(this, "No more images", Toast.LENGTH_SHORT).show()
+            setResult(RESULT_OK, Intent().putExtra("MODIFIED_POSITION", currentPosition))
             finish()
             return
         }
@@ -707,4 +719,12 @@ class EditorActivity : AppCompatActivity() {
         val tempFile: File,
         val overwriteOriginal: Boolean
     )
+
+    override fun finish() {
+        // 如果图片被修改，返回结果给 Gallery
+        if (hasModified) {
+            setResult(RESULT_OK, Intent().putExtra("MODIFIED_POSITION", currentPosition))
+        }
+        super.finish()
+    }
 }
