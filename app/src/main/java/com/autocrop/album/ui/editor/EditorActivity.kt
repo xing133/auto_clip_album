@@ -212,30 +212,6 @@ class EditorActivity : AppCompatActivity() {
             try {
                 val uri = imageUris[currentPosition]
 
-                // 检查是否是调试目标图片
-                val debugTargetPath = "/storage/emulated/0/DCIM/Screenshots/Screenshot_2025-10-11-19-58-09-203_com.ss.android.ugc.aweme.jpg"
-                val isDebugTarget = withContext(Dispatchers.IO) {
-                    try {
-                        val cursor = contentResolver.query(uri, arrayOf(android.provider.MediaStore.Images.Media.DATA), null, null, null)
-                        val actualPath = cursor?.use {
-                            if (it.moveToFirst()) {
-                                it.getString(0)
-                            } else null
-                        }
-                        actualPath == debugTargetPath
-                    } catch (e: Exception) {
-                        false
-                    }
-                }
-
-                // 如果是调试目标，启用详细调试模式
-                if (isDebugTarget) {
-                    android.util.Log.w("EditorActivity", "⚠️ DEBUG TARGET DETECTED! Enabling VERBOSE_DEBUG_MODE")
-                    com.autocrop.album.domain.LetterboxDetector.VERBOSE_DEBUG_MODE = true
-                } else {
-                    com.autocrop.album.domain.LetterboxDetector.VERBOSE_DEBUG_MODE = false
-                }
-
                 // 加载图片并获取黑边检测信息（降低到 1024 以减少内存压力）
                 android.util.Log.d("EditorActivity", "Loading image from URI: $uri")
                 val bitmapWithInfo = withContext(Dispatchers.IO) {

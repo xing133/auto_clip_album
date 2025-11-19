@@ -9,6 +9,7 @@ import com.autocrop.album.data.models.ImageItem
 import com.autocrop.album.databinding.ItemGalleryImageBinding
 import com.bumptech.glide.Glide
 import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions
+import com.bumptech.glide.signature.ObjectKey
 
 /**
  * Gallery 图片网格适配器
@@ -36,9 +37,11 @@ class GalleryAdapter(
     ) : RecyclerView.ViewHolder(binding.root) {
 
         fun bind(item: ImageItem, position: Int) {
+            // 使用图片的修改时间作为签名，确保文件修改后缓存会更新
             Glide.with(binding.imageView)
                 .load(item.uri)
                 .centerCrop()
+                .signature(ObjectKey("${item.uri}_${item.dateModified}"))
                 .transition(DrawableTransitionOptions.withCrossFade())
                 .into(binding.imageView)
 
