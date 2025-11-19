@@ -1,11 +1,14 @@
 package com.autocrop.album.domain
 
+import android.graphics.PointF
 import android.graphics.Rect
 import android.graphics.RectF
 import com.autocrop.album.data.models.CropBox
 import com.autocrop.album.data.models.DetectedPerson
+import com.autocrop.album.data.models.LandmarkType
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sqrt
 
 /**
  * 裁剪框计算器
@@ -75,13 +78,50 @@ object CropCalculator {
     ): RectF {
         var rect = RectF(person.boundingBox)
 
-        // 1. 添加边距
-        val paddingX = rect.width() * PADDING_RATIO
-        val paddingY = rect.height() * PADDING_RATIO
-        rect.left -= paddingX
-        rect.right += paddingX
-        rect.top -= paddingY
-        rect.bottom += paddingY
+        // 1. 添加边距 - 使用自适应外扩策略
+        val headReferenceSize = calculateHeadReferenceSize(person)
+        val eyeMouthDistance = getEyeMouthDistance(person)
+
+        if (headReferenceSize != null) {
+            // 使用基于头部尺寸的自适应外扩
+            val imageDimension = max(imageWidth, imageHeight).toFloat()
+            val headRatio = headReferenceSize / imageDimension
+
+            // 顶部外扩：专门使用眼嘴距，倍数更大（用于覆盖头顶和头发）
+            val topMultiplier = calculateTopExpansionMultiplier(headRatio)
+            val topPadding = if (eyeMouthDistance != null) {
+                eyeMouthDistance * topMultiplier
+            } else {
+                headReferenceSize * topMultiplier
+            }
+
+            // 左右外扩：使用头部参考尺寸
+            val sideMultiplier = calculateSideExpansionMultiplier(headRatio)
+            val sidePadding = headReferenceSize * sideMultiplier
+
+            rect.left -= sidePadding
+            rect.right += sidePadding
+            rect.top -= topPadding
+
+            // 底部（躯干部分）使用固定外扩
+            val bodyPaddingY = rect.height() * PADDING_RATIO
+            rect.bottom += bodyPaddingY
+
+            android.util.Log.d("CropCalculator",
+                "Adaptive padding: headSize=$headReferenceSize, headRatio=$headRatio, " +
+                "eyeMouthDist=$eyeMouthDistance, topMultiplier=$topMultiplier, topPadding=$topPadding, " +
+                "sideMultiplier=$sideMultiplier, sidePadding=$sidePadding, bodyPadding=$bodyPaddingY")
+        } else {
+            // 回退到固定外扩（当无法检测到头部关键点时）
+            val paddingX = rect.width() * PADDING_RATIO
+            val paddingY = rect.height() * PADDING_RATIO
+            rect.left -= paddingX
+            rect.right += paddingX
+            rect.top -= paddingY
+            rect.bottom += paddingY
+
+            android.util.Log.d("CropCalculator", "Using fallback padding (no head landmarks)")
+        }
 
         // 2. 检查并修正宽高比
         rect = adjustAspectRatio(rect)
@@ -95,6 +135,130 @@ object CropCalculator {
         }
 
         return rect
+    }
+
+    /**
+     * 计算头部参考尺寸
+     * 返回 max(眼间距, 眼嘴距)，如果无法计算则返回 null
+     */
+    private fun calculateHeadReferenceSize(person: DetectedPerson): Float? {
+        // 获取关键点
+        val leftEye = person.landmarks.find {
+            it.type == LandmarkType.LEFT_EYE && it.visibility > DetectedPerson.VISIBILITY_THRESHOLD
+        }
+        val rightEye = person.landmarks.find {
+            it.type == LandmarkType.RIGHT_EYE && it.visibility > DetectedPerson.VISIBILITY_THRESHOLD
+        }
+        val mouthLeft = person.landmarks.find {
+            it.type == LandmarkType.MOUTH_LEFT && it.visibility > DetectedPerson.VISIBILITY_THRESHOLD
+        }
+        val mouthRight = person.landmarks.find {
+            it.type == LandmarkType.MOUTH_RIGHT && it.visibility > DetectedPerson.VISIBILITY_THRESHOLD
+        }
+
+        // 计算眼间距
+        val eyeDistance = if (leftEye != null && rightEye != null) {
+            distance(leftEye.position, rightEye.position)
+        } else null
+
+        // 计算眼嘴距
+        val eyeMouthDistance = if (leftEye != null && rightEye != null &&
+                                    mouthLeft != null && mouthRight != null) {
+            val eyeCenter = PointF(
+                (leftEye.position.x + rightEye.position.x) / 2,
+                (leftEye.position.y + rightEye.position.y) / 2
+            )
+            val mouthCenter = PointF(
+                (mouthLeft.position.x + mouthRight.position.x) / 2,
+                (mouthLeft.position.y + mouthRight.position.y) / 2
+            )
+            distance(eyeCenter, mouthCenter)
+        } else null
+
+        // 返回最大值
+        val result = when {
+            eyeDistance != null && eyeMouthDistance != null -> max(eyeDistance, eyeMouthDistance)
+            eyeDistance != null -> eyeDistance
+            eyeMouthDistance != null -> eyeMouthDistance
+            else -> null
+        }
+
+        if (result != null) {
+            android.util.Log.d("CropCalculator",
+                "Head reference: eyeDist=$eyeDistance, eyeMouthDist=$eyeMouthDistance, max=$result")
+        }
+
+        return result
+    }
+
+    /**
+     * 获取眼嘴距离（单独提取，用于顶部外扩）
+     */
+    private fun getEyeMouthDistance(person: DetectedPerson): Float? {
+        val leftEye = person.landmarks.find {
+            it.type == LandmarkType.LEFT_EYE && it.visibility > DetectedPerson.VISIBILITY_THRESHOLD
+        }
+        val rightEye = person.landmarks.find {
+            it.type == LandmarkType.RIGHT_EYE && it.visibility > DetectedPerson.VISIBILITY_THRESHOLD
+        }
+        val mouthLeft = person.landmarks.find {
+            it.type == LandmarkType.MOUTH_LEFT && it.visibility > DetectedPerson.VISIBILITY_THRESHOLD
+        }
+        val mouthRight = person.landmarks.find {
+            it.type == LandmarkType.MOUTH_RIGHT && it.visibility > DetectedPerson.VISIBILITY_THRESHOLD
+        }
+
+        return if (leftEye != null && rightEye != null && mouthLeft != null && mouthRight != null) {
+            val eyeCenter = PointF(
+                (leftEye.position.x + rightEye.position.x) / 2,
+                (leftEye.position.y + rightEye.position.y) / 2
+            )
+            val mouthCenter = PointF(
+                (mouthLeft.position.x + mouthRight.position.x) / 2,
+                (mouthLeft.position.y + mouthRight.position.y) / 2
+            )
+            distance(eyeCenter, mouthCenter)
+        } else null
+    }
+
+    /**
+     * 根据头部占比计算顶部外扩倍数（针对眼嘴距）
+     * @param headRatio 头部尺寸占图片尺寸的比例
+     * @return 外扩倍数（相对于眼嘴距离）
+     */
+    private fun calculateTopExpansionMultiplier(headRatio: Float): Float {
+        // 统一使用 2.5x 外扩（覆盖头顶和头发）
+        return 2.5f
+    }
+
+    /**
+     * 根据头部占比计算左右外扩倍数
+     * @param headRatio 头部尺寸占图片尺寸的比例
+     * @return 外扩倍数（相对于头部参考尺寸）
+     */
+    private fun calculateSideExpansionMultiplier(headRatio: Float): Float {
+        // 设计映射函数：左右外扩相对保守
+        // headRatio < 0.1 (远景) -> 0.2x (小外扩)
+        // headRatio = 0.2 (中景) -> 0.4x
+        // headRatio = 0.3 (近景) -> 0.6x
+        // headRatio > 0.4 (特写) -> 0.8x
+
+        return when {
+            headRatio < 0.1f -> 0.2f
+            headRatio < 0.2f -> 0.2f + (headRatio - 0.1f) * (0.4f - 0.2f) / 0.1f
+            headRatio < 0.3f -> 0.4f + (headRatio - 0.2f) * (0.6f - 0.4f) / 0.1f
+            headRatio < 0.4f -> 0.6f + (headRatio - 0.3f) * (0.8f - 0.6f) / 0.1f
+            else -> 0.8f
+        }
+    }
+
+    /**
+     * 计算两点之间的距离
+     */
+    private fun distance(p1: PointF, p2: PointF): Float {
+        val dx = p1.x - p2.x
+        val dy = p1.y - p2.y
+        return sqrt(dx * dx + dy * dy)
     }
 
     /**
