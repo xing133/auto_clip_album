@@ -31,7 +31,7 @@ class GalleryActivity : AppCompatActivity() {
     private lateinit var repository: MediaStoreRepository
     private lateinit var adapter: GalleryAdapter
 
-    private var currentSortOrder = ImageItem.Companion.SortOrder.NAME_ASC
+    private var currentSortOrder = ImageItem.Companion.SortOrder.NAME_DESC
     private var imageList: List<ImageItem> = emptyList()
     private var currentFolder: String? = null
     private var availableFolders: List<String> = emptyList()
@@ -109,9 +109,7 @@ class GalleryActivity : AppCompatActivity() {
         setupRecyclerView()
         setupFolderSelector()
 
-        // 默认显示 Screenshots 目录
-        findScreenshotsFolder()
-
+        // 检查权限并加载（会自动查找 Screenshots 目录）
         checkPermissionsAndLoad()
     }
 
@@ -126,33 +124,16 @@ class GalleryActivity : AppCompatActivity() {
             layoutManager = GridLayoutManager(this@GalleryActivity, 3)
             adapter = this@GalleryActivity.adapter
         }
+
+        // 连接快速滚动条
+        binding.fastScroller.attachToRecyclerView(binding.recyclerView)
     }
 
     private fun checkPermissionsAndLoad() {
-        if (PermissionHelper.hasPermissions(this)) {
-            loadImages()
-        } else {
-            if (PermissionHelper.shouldShowRationale(this)) {
-                PermissionHelper.showRationaleDialog(this) {
-                    PermissionHelper.requestPermissions(permissionLauncher)
-                }
-            } else {
-                PermissionHelper.requestPermissions(permissionLauncher)
-            }
-        }
-    }
-
-    private fun setupFolderSelector() {
-        binding.btnSelectFolder.setOnClickListener {
-            showFolderSelector()
-        }
-    }
-
-    private fun findScreenshotsFolder() {
         lifecycleScope.launch {
+            // 先查找 Screenshots 目录
             try {
                 availableFolders = repository.queryFolders()
-                // 查找 Screenshots 或 截屏 目录
                 currentFolder = availableFolders.firstOrNull { folder ->
                     folder.contains("Screenshots", ignoreCase = true) ||
                     folder.contains("截屏", ignoreCase = true) ||
@@ -162,6 +143,25 @@ class GalleryActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 e.printStackTrace()
             }
+
+            // 然后加载图片
+            if (PermissionHelper.hasPermissions(this@GalleryActivity)) {
+                loadImages()
+            } else {
+                if (PermissionHelper.shouldShowRationale(this@GalleryActivity)) {
+                    PermissionHelper.showRationaleDialog(this@GalleryActivity) {
+                        PermissionHelper.requestPermissions(permissionLauncher)
+                    }
+                } else {
+                    PermissionHelper.requestPermissions(permissionLauncher)
+                }
+            }
+        }
+    }
+
+    private fun setupFolderSelector() {
+        binding.btnSelectFolder.setOnClickListener {
+            showFolderSelector()
         }
     }
 
