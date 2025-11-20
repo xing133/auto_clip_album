@@ -37,7 +37,7 @@ class PoseDetector(private val context: Context) {
             val options = PoseLandmarker.PoseLandmarkerOptions.builder()
                 .setBaseOptions(baseOptions)
                 .setRunningMode(RunningMode.IMAGE)
-                .setNumPoses(5)  // 最多检测5个人
+                .setNumPoses(2)  // 最多检测5个人
                 .setMinPoseDetectionConfidence(DetectedPerson.MIN_CONFIDENCE)
                 .setMinPosePresenceConfidence(DetectedPerson.MIN_CONFIDENCE)
                 .setMinTrackingConfidence(DetectedPerson.MIN_CONFIDENCE)
