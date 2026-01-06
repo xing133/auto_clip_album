@@ -47,16 +47,18 @@ object CropCalculator {
      * @param imageWidth 图片宽度
      * @param imageHeight 图片高度
      * @param letterboxResult 黑边检测结果（可选），用于确保裁剪框不包含黑边
+     * @param topExpansionMultiplier 顶部外扩系数（可选），默认值为 2.5
      * @return 裁剪框列表
      */
     fun generateCropBoxes(
         persons: List<DetectedPerson>,
         imageWidth: Int,
         imageHeight: Int,
-        letterboxResult: LetterboxDetector.DetectionResult? = null
+        letterboxResult: LetterboxDetector.DetectionResult? = null,
+        topExpansionMultiplier: Float = 2.5f
     ): List<CropBox> {
         return persons.mapIndexed { index, person ->
-            val rect = calculateCropRect(person, imageWidth, imageHeight, letterboxResult)
+            val rect = calculateCropRect(person, imageWidth, imageHeight, letterboxResult, topExpansionMultiplier)
             CropBox(
                 id = index,
                 rect = rect,
@@ -74,7 +76,8 @@ object CropCalculator {
         person: DetectedPerson,
         imageWidth: Int,
         imageHeight: Int,
-        letterboxResult: LetterboxDetector.DetectionResult? = null
+        letterboxResult: LetterboxDetector.DetectionResult? = null,
+        topExpansionMultiplier: Float = 2.5f
     ): RectF {
         var rect = RectF(person.boundingBox)
 
@@ -88,11 +91,11 @@ object CropCalculator {
             val headRatio = headReferenceSize / imageDimension
 
             // 顶部外扩：专门使用眼嘴距，倍数更大（用于覆盖头顶和头发）
-            val topMultiplier = calculateTopExpansionMultiplier(headRatio)
+            // 使用传入的可配置系数
             val topPadding = if (eyeMouthDistance != null) {
-                eyeMouthDistance * topMultiplier
+                eyeMouthDistance * topExpansionMultiplier
             } else {
-                headReferenceSize * topMultiplier
+                headReferenceSize * topExpansionMultiplier
             }
 
             // 左右外扩：使用头部参考尺寸
@@ -109,7 +112,7 @@ object CropCalculator {
 
             android.util.Log.d("CropCalculator",
                 "Adaptive padding: headSize=$headReferenceSize, headRatio=$headRatio, " +
-                "eyeMouthDist=$eyeMouthDistance, topMultiplier=$topMultiplier, topPadding=$topPadding, " +
+                "eyeMouthDist=$eyeMouthDistance, topMultiplier=$topExpansionMultiplier, topPadding=$topPadding, " +
                 "sideMultiplier=$sideMultiplier, sidePadding=$sidePadding, bodyPadding=$bodyPaddingY")
         } else {
             // 回退到固定外扩（当无法检测到头部关键点时）
@@ -219,16 +222,6 @@ object CropCalculator {
             )
             distance(eyeCenter, mouthCenter)
         } else null
-    }
-
-    /**
-     * 根据头部占比计算顶部外扩倍数（针对眼嘴距）
-     * @param headRatio 头部尺寸占图片尺寸的比例
-     * @return 外扩倍数（相对于眼嘴距离）
-     */
-    private fun calculateTopExpansionMultiplier(headRatio: Float): Float {
-        // 统一使用 2.5x 外扩（覆盖头顶和头发）
-        return 2.5f
     }
 
     /**

@@ -22,6 +22,7 @@ import androidx.viewpager2.widget.ViewPager2
 import com.autocrop.album.R
 import com.autocrop.album.data.ImageDataHolder
 import com.autocrop.album.data.MediaStoreRepository
+import com.autocrop.album.data.SettingsManager
 import com.autocrop.album.data.models.CropBox
 import com.autocrop.album.data.MediaStoreRepository.SaveImageResult
 import com.autocrop.album.data.MediaStoreRepository.DeleteImageResult
@@ -46,6 +47,7 @@ class EditorActivity : AppCompatActivity() {
     private lateinit var poseDetector: PoseDetector
     private lateinit var imageProcessor: ImageProcessor
     private lateinit var repository: MediaStoreRepository
+    private lateinit var settingsManager: SettingsManager
 
     private var imageUris: List<Uri> = emptyList()
     private var currentPosition: Int = 0
@@ -72,6 +74,7 @@ class EditorActivity : AppCompatActivity() {
         poseDetector = PoseDetector(this)
         imageProcessor = ImageProcessor(this)
         repository = MediaStoreRepository(this)
+        settingsManager = SettingsManager.getInstance(this)
         registerEditPermissionLauncher()
         registerDeletePermissionLauncher()
 
@@ -242,8 +245,9 @@ class EditorActivity : AppCompatActivity() {
                 val persons = poseDetector.detectPose(bitmap)
 
                 // 生成裁剪框（传入黑边信息，确保裁剪框不包含黑边）
+                val topExpansionMultiplier = settingsManager.getTopExpansionMultiplier()
                 currentCropBoxes = if (persons.isNotEmpty()) {
-                    CropCalculator.generateCropBoxes(persons, bitmap.width, bitmap.height, letterboxResult)
+                    CropCalculator.generateCropBoxes(persons, bitmap.width, bitmap.height, letterboxResult, topExpansionMultiplier)
                 } else {
                     // 没有检测到人物，显示提示
                     showStatus(getString(R.string.no_person_detected))

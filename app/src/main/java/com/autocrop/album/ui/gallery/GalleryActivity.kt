@@ -18,6 +18,7 @@ import com.autocrop.album.data.models.ImageItem
 import com.autocrop.album.databinding.ActivityGalleryBinding
 import com.autocrop.album.ui.common.PermissionHelper
 import com.autocrop.album.ui.editor.EditorActivity
+import com.autocrop.album.ui.settings.SettingsActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -140,6 +141,7 @@ class GalleryActivity : AppCompatActivity() {
                     folder.contains("ScreenRecords", ignoreCase = true) ||
                     folder.contains("录屏", ignoreCase = true)
                 }
+                updateTitle(currentFolder)
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -179,6 +181,7 @@ class GalleryActivity : AppCompatActivity() {
                     .setTitle("Select Folder")
                     .setItems(folderNames.toTypedArray()) { dialog, which ->
                         currentFolder = if (which == 0) null else availableFolders[which - 1]
+                        updateTitle(currentFolder)
                         loadImages()
                     }
                     .show()
@@ -259,7 +262,24 @@ class GalleryActivity : AppCompatActivity() {
                 loadImages()
                 true
             }
+            R.id.action_settings -> {
+                openSettings()
+                true
+            }
             else -> super.onOptionsItemSelected(item)
+        }
+    }
+
+    private fun openSettings() {
+        val intent = Intent(this, SettingsActivity::class.java)
+        startActivity(intent)
+    }
+
+    private fun updateTitle(folderPath: String?) {
+        if (folderPath == null) {
+            binding.toolbar.title = getString(R.string.gallery_title)
+        } else {
+            binding.toolbar.title = File(folderPath).name
         }
     }
 }

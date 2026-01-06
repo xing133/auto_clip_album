@@ -45,6 +45,13 @@
             android:screenOrientation="portrait"
             android:theme="@style/Theme.AutoCropAlbum.Fullscreen" />
 
+        <!-- 设置 Activity -->
+        <activity
+            android:name=".ui.settings.SettingsActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:parentActivityName=".ui.gallery.GalleryActivity" />
+
     </application>
 
 </manifest>
