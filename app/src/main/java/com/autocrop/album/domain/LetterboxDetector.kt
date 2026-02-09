@@ -167,13 +167,26 @@ object LetterboxDetector {
 
     /**
      * 检测内容边界（结合亮度统计和边缘检测）
+     * 在入口处一次性批量读取像素，避免后续方法重复 JNI 调用
      */
     private fun detectContentBounds(bitmap: Bitmap): DetectionResult {
+        // 准备分析用的图片（缩小以提高性能）
+        val analysis = prepareAnalysisBitmap(bitmap)
+        val analysisBitmap = analysis.bitmap
+
+        // 一次性批量读取所有像素，消除后续 JNI 瓶颈
+        val pixels = bitmapToPixelArray(analysisBitmap)
+        val luma = pixelsToLumaArray(pixels, analysisBitmap.width, analysisBitmap.height)
+
         // 方法1：基于亮度统计（原有逻辑）
-        val brightnessResult = detectByBrightness(bitmap)
+        val brightnessResult = detectByBrightness(bitmap, analysis, pixels)
 
         // 方法2：基于边缘检测（新逻辑）
-        val edgeResult = detectByEdges(bitmap)
+        val edgeResult = detectByEdges(bitmap, analysis, luma)
+
+        if (analysis.shouldRecycle) {
+            analysisBitmap.recycle()
+        }
 
         // 结合两种方法：对于每个方向，取裁剪更多的结果
         val combinedTop = max(brightnessResult.trimmedRatios.top, edgeResult.trimmedRatios.top)
@@ -226,11 +239,13 @@ object LetterboxDetector {
 
     /**
      * 基于亮度统计的检测（原有逻辑）
+     * 使用预读取的像素数组代替逐像素 getPixel
      */
-    private fun detectByBrightness(bitmap: Bitmap): DetectionResult {
-        val analysis = prepareAnalysisBitmap(bitmap)
-        val rowStats = calculateRowStats(analysis.bitmap)
-        val colStats = calculateColumnStats(analysis.bitmap)
+    private fun detectByBrightness(bitmap: Bitmap, analysis: AnalysisBitmap, pixels: IntArray): DetectionResult {
+        val w = analysis.bitmap.width
+        val h = analysis.bitmap.height
+        val rowStats = calculateRowStats(pixels, w, h)
+        val colStats = calculateColumnStats(pixels, w, h)
 
         val avgRowBrightness = rowStats.sumOf { it.mean.toDouble() }.toFloat() / rowStats.size
         val avgColBrightness = colStats.sumOf { it.mean.toDouble() }.toFloat() / colStats.size
@@ -243,8 +258,8 @@ object LetterboxDetector {
         val scaledRect = Rect(
             trimLeft,
             trimTop,
-            analysis.bitmap.width - trimRight,
-            analysis.bitmap.height - trimBottom
+            w - trimRight,
+            h - trimBottom
         )
 
         val bounds = Rect(
@@ -253,10 +268,6 @@ object LetterboxDetector {
             (scaledRect.right * analysis.scaleX).roundToInt().coerceIn(0, bitmap.width),
             (scaledRect.bottom * analysis.scaleY).roundToInt().coerceIn(0, bitmap.height)
         )
-
-        if (analysis.shouldRecycle) {
-            analysis.bitmap.recycle()
-        }
 
         val trimmedRatios = TrimmedRatios(
             top = bounds.top.toFloat() / bitmap.height,
@@ -277,24 +288,21 @@ object LetterboxDetector {
 
     /**
      * 基于边缘检测的新算法（使用 Sobel 算子）
+     * 使用预计算的 luma 数组代替逐像素 getPixel
      */
-    private fun detectByEdges(bitmap: Bitmap): DetectionResult {
+    private fun detectByEdges(bitmap: Bitmap, analysis: AnalysisBitmap, luma: FloatArray): DetectionResult {
         try {
-            // 准备分析用的图片（缩小以提高性能）
-            val analysis = prepareAnalysisBitmap(bitmap)
-            val analysisBitmap = analysis.bitmap
+            val width = analysis.bitmap.width
+            val height = analysis.bitmap.height
 
-            // 转换为灰度图并计算边缘
-            val edgeMap = computeEdgeMap(analysisBitmap)
-
-            val height = edgeMap.size
-            val width = edgeMap[0].size
+            // 使用预计算的 luma 数组计算边缘
+            val edgeMap = computeEdgeMap(luma, width, height)
 
             // 检测四个方向的边界（返回的是从中心开始的步数）
-            val trimTopStep = detectEdgeBoundary(edgeMap, analysisBitmap, Direction.TOP)
-            val trimBottomStep = detectEdgeBoundary(edgeMap, analysisBitmap, Direction.BOTTOM)
-            val trimLeftStep = detectEdgeBoundary(edgeMap, analysisBitmap, Direction.LEFT)
-            val trimRightStep = detectEdgeBoundary(edgeMap, analysisBitmap, Direction.RIGHT)
+            val trimTopStep = detectEdgeBoundary(edgeMap, luma, width, height, Direction.TOP)
+            val trimBottomStep = detectEdgeBoundary(edgeMap, luma, width, height, Direction.BOTTOM)
+            val trimLeftStep = detectEdgeBoundary(edgeMap, luma, width, height, Direction.LEFT)
+            val trimRightStep = detectEdgeBoundary(edgeMap, luma, width, height, Direction.RIGHT)
 
             // 将步数转换为实际的边缘位置（像素数）
             val centerY = height / 2
@@ -310,10 +318,6 @@ object LetterboxDetector {
 
             val trimLeftPixels = if (trimLeftStep > 0) centerX - trimLeftStep else 0
             val trimRightPixels = if (trimRightStep > 0) width - (centerX + trimRightStep) else 0
-
-            if (analysis.shouldRecycle) {
-                analysisBitmap.recycle()
-            }
 
             if (DEBUG_LOGS_ENABLED) {
                 Log.d(TAG, "detectByEdges: steps T:$trimTopStep B:$trimBottomStep L:$trimLeftStep R:$trimRightStep")
@@ -360,11 +364,9 @@ object LetterboxDetector {
     }
 
     /**
-     * 使用 Sobel 算子计算边缘图
+     * 使用 Sobel 算子计算边缘图（使用预计算的 luma 数组，避免逐像素 JNI 调用）
      */
-    private fun computeEdgeMap(bitmap: Bitmap): Array<FloatArray> {
-        val width = bitmap.width
-        val height = bitmap.height
+    private fun computeEdgeMap(luma: FloatArray, width: Int, height: Int): Array<FloatArray> {
         val edgeMap = Array(height) { FloatArray(width) }
 
         // Sobel 算子核
@@ -391,10 +393,9 @@ object LetterboxDetector {
                 // 应用 Sobel 算子
                 for (ky in -1..1) {
                     for (kx in -1..1) {
-                        val pixel = bitmap.getPixel(x + kx, y + ky)
-                        val luma = rgbToLuma(pixel)
-                        gx += luma * sobelX[ky + 1][kx + 1]
-                        gy += luma * sobelY[ky + 1][kx + 1]
+                        val l = luma[(y + ky) * width + (x + kx)]
+                        gx += l * sobelX[ky + 1][kx + 1]
+                        gy += l * sobelY[ky + 1][kx + 1]
                     }
                 }
 
@@ -422,10 +423,9 @@ object LetterboxDetector {
 
     /**
      * 检测某个方向的边界（新版：从中心向外搜索，忽略中心20%区域，验证亮度）
+     * 使用预计算的 luma 数组代替 bitmap
      */
-    private fun detectEdgeBoundary(edgeMap: Array<FloatArray>, bitmap: Bitmap, direction: Direction): Int {
-        val height = edgeMap.size
-        val width = edgeMap[0].size
+    private fun detectEdgeBoundary(edgeMap: Array<FloatArray>, luma: FloatArray, width: Int, height: Int, direction: Direction): Int {
 
         // 中心安全区域：占图片的20%（单边10%）
         val centerSafeRatio = 0.1f
@@ -503,7 +503,7 @@ object LetterboxDetector {
             // 如果这一行的边缘覆盖率超过阈值，验证外侧区域的亮度
             if (coverage >= EDGE_COVERAGE_THRESHOLD) {
                 // 验证外侧区域是否足够暗（真正的黑边）
-                val isValidLetterbox = verifyLetterboxBrightness(bitmap, direction, actualPos, width, height)
+                val isValidLetterbox = verifyLetterboxBrightness(luma, direction, actualPos, width, height)
 
                 if (isValidLetterbox) {
                     if (DEBUG_LOGS_ENABLED) {
@@ -536,7 +536,7 @@ object LetterboxDetector {
                 Direction.RIGHT -> centerPos + bestBoundary
             }
 
-            val isValidLetterbox = verifyLetterboxBrightness(bitmap, direction, actualPos, width, height)
+            val isValidLetterbox = verifyLetterboxBrightness(luma, direction, actualPos, width, height)
 
             if (isValidLetterbox) {
                 if (DEBUG_LOGS_ENABLED) {
@@ -562,9 +562,10 @@ object LetterboxDetector {
 
     /**
      * 验证检测到的区域外侧是否真的是黑边（足够暗）
+     * 使用预计算的 luma 数组代替逐像素 bitmap.getPixel()
      */
     private fun verifyLetterboxBrightness(
-        bitmap: Bitmap,
+        luma: FloatArray,
         direction: Direction,
         boundaryPos: Int,
         width: Int,
@@ -614,8 +615,7 @@ object LetterboxDetector {
         for (y in startY until endY) {
             for (x in startX until endX) {
                 if (x >= 0 && x < width && y >= 0 && y < height) {
-                    val pixel = bitmap.getPixel(x, y)
-                    totalBrightness += rgbToLuma(pixel)
+                    totalBrightness += luma[y * width + x]
                     pixelCount++
                 }
             }
@@ -711,17 +711,16 @@ object LetterboxDetector {
         return AnalysisBitmap(scaled, scaleX, scaleY, true)
     }
 
-    private fun calculateRowStats(bitmap: Bitmap): Array<StripStats> {
-        val stats = Array(bitmap.height) { StripStats(0f, 0f, 0f) }
-        val pixels = IntArray(bitmap.width)
+    private fun calculateRowStats(pixels: IntArray, width: Int, height: Int): Array<StripStats> {
+        val stats = Array(height) { StripStats(0f, 0f, 0f) }
 
-        for (y in 0 until bitmap.height) {
-            bitmap.getPixels(pixels, 0, bitmap.width, 0, y, bitmap.width, 1)
+        for (y in 0 until height) {
             var sum = 0f
             var sumSq = 0f
             var darkCount = 0
-            for (pixel in pixels) {
-                val luma = rgbToLuma(pixel)
+            val rowOffset = y * width
+            for (x in 0 until width) {
+                val luma = rgbToLuma(pixels[rowOffset + x])
                 sum += luma
                 sumSq += luma * luma
                 if (luma <= DARK_PIXEL_VALUE) {
@@ -729,25 +728,24 @@ object LetterboxDetector {
                 }
             }
 
-            val mean = sum / bitmap.width
-            val variance = (sumSq / bitmap.width) - (mean * mean)
-            val darkFraction = darkCount.toFloat() / bitmap.width
+            val mean = sum / width
+            val variance = (sumSq / width) - (mean * mean)
+            val darkFraction = darkCount.toFloat() / width
             stats[y] = StripStats(mean, max(0f, variance), darkFraction)
         }
 
         return stats
     }
 
-    private fun calculateColumnStats(bitmap: Bitmap): Array<StripStats> {
-        val stats = Array(bitmap.width) { StripStats(0f, 0f, 0f) }
+    private fun calculateColumnStats(pixels: IntArray, width: Int, height: Int): Array<StripStats> {
+        val stats = Array(width) { StripStats(0f, 0f, 0f) }
 
-        for (x in 0 until bitmap.width) {
+        for (x in 0 until width) {
             var sum = 0f
             var sumSq = 0f
             var darkCount = 0
-            for (y in 0 until bitmap.height) {
-                val pixel = bitmap.getPixel(x, y)
-                val luma = rgbToLuma(pixel)
+            for (y in 0 until height) {
+                val luma = rgbToLuma(pixels[y * width + x])
                 sum += luma
                 sumSq += luma * luma
                 if (luma <= DARK_PIXEL_VALUE) {
@@ -755,9 +753,9 @@ object LetterboxDetector {
                 }
             }
 
-            val mean = sum / bitmap.height
-            val variance = (sumSq / bitmap.height) - (mean * mean)
-            val darkFraction = darkCount.toFloat() / bitmap.height
+            val mean = sum / height
+            val variance = (sumSq / height) - (mean * mean)
+            val darkFraction = darkCount.toFloat() / height
             stats[x] = StripStats(mean, max(0f, variance), darkFraction)
         }
 
@@ -769,6 +767,28 @@ object LetterboxDetector {
         val g = Color.green(pixel)
         val b = Color.blue(pixel)
         return 0.2126f * r + 0.7152f * g + 0.0722f * b
+    }
+
+    /**
+     * 一次性批量读取 bitmap 的所有像素到 IntArray，消除逐像素 JNI 调用
+     */
+    private fun bitmapToPixelArray(bitmap: Bitmap): IntArray {
+        val width = bitmap.width
+        val height = bitmap.height
+        val pixels = IntArray(width * height)
+        bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+        return pixels
+    }
+
+    /**
+     * 将像素 IntArray 转换为亮度 FloatArray，供后续所有方法复用
+     */
+    private fun pixelsToLumaArray(pixels: IntArray, width: Int, height: Int): FloatArray {
+        val luma = FloatArray(width * height)
+        for (i in pixels.indices) {
+            luma[i] = rgbToLuma(pixels[i])
+        }
+        return luma
     }
 
     private fun detectTrim(

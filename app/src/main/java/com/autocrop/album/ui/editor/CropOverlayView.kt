@@ -185,14 +185,14 @@ class CropOverlayView @JvmOverloads constructor(
         // 1. 绘制黑边 debug 可视化（最先绘制，在底层）
         drawLetterboxDebug(canvas)
 
-        // 2. 绘制骨骼连接线
+        // 2. 绘制裁剪框（含遮罩，先画）
+        drawCropBoxes(canvas)
+
+        // 3. 绘制骨骼连接线（画在遮罩之上，清晰可见）
         drawPoseConnections(canvas)
 
-        // 3. 绘制骨骼关键点
+        // 4. 绘制骨骼关键点（画在遮罩之上，清晰可见）
         drawPoseLandmarks(canvas)
-
-        // 4. 绘制裁剪框
-        drawCropBoxes(canvas)
 
         // 5. 绘制人物编号
         drawPersonLabels(canvas)

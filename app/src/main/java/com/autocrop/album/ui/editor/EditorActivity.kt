@@ -56,6 +56,7 @@ class EditorActivity : AppCompatActivity() {
     // 标记图片是否被修改（保存/删除），用于返回结果给 Gallery
     private var hasModified: Boolean = false
     private var currentBitmap: Bitmap? = null
+    private var currentLetterboxResult: com.autocrop.album.domain.LetterboxDetector.DetectionResult? = null
 
     private lateinit var gestureDetector: GestureDetectorCompat
     private var isProcessing = false
@@ -91,23 +92,25 @@ class EditorActivity : AppCompatActivity() {
         setupButtons()
         setupGestureDetector()
 
-        // 初始化 PoseDetector（必须先初始化完成后再处理图片）
+        // 初始化 PoseDetector（后台静默进行，不阻塞）
+        binding.btnDetectPose.isEnabled = false
         lifecycleScope.launch {
             try {
-                showLoading(true, "Initializing pose detector...")
                 poseDetector.initialize()
                 isPoseDetectorReady = true
-                showLoading(false)
-
-                // 初始化完成后处理当前图片
-                val viewHolder = (binding.viewPager.getChildAt(0) as? androidx.recyclerview.widget.RecyclerView)
-                    ?.findViewHolderForAdapterPosition(currentPosition) as? ImagePagerAdapter.ImagePageViewHolder
-                viewHolder?.getBinding()?.let { pageBinding ->
-                    processCurrentImage(pageBinding)
-                }
+                binding.btnDetectPose.isEnabled = true
             } catch (e: Exception) {
                 showError("Failed to initialize pose detector: ${e.message}")
                 isPoseDetectorReady = false
+            }
+        }
+
+        // 立即检测黑边（不等待 PoseDetector）
+        binding.viewPager.post {
+            val viewHolder = (binding.viewPager.getChildAt(0) as? androidx.recyclerview.widget.RecyclerView)
+                ?.findViewHolderForAdapterPosition(currentPosition) as? ImagePagerAdapter.ImagePageViewHolder
+            viewHolder?.getBinding()?.let { pageBinding ->
+                detectBlackBorders(pageBinding)
             }
         }
     }
@@ -127,22 +130,20 @@ class EditorActivity : AppCompatActivity() {
             override fun onPageSelected(position: Int) {
                 currentPosition = position
                 currentCropBoxes = emptyList()
+                currentLetterboxResult = null
                 currentBitmap?.recycle()
                 currentBitmap = null
 
                 // 更新导航按钮的可见性
                 updateNavigationButtons()
 
-                // 只有在初始化完成后才处理新图片
-                if (isPoseDetectorReady) {
-                    // 使用 post 确保 ViewHolder 已经创建完成
-                    binding.viewPager.post {
-                        val viewHolder = (binding.viewPager.getChildAt(0) as? androidx.recyclerview.widget.RecyclerView)
-                            ?.findViewHolderForAdapterPosition(position) as? ImagePagerAdapter.ImagePageViewHolder
+                // 自动检测黑边（不需要等 PoseDetector）
+                binding.viewPager.post {
+                    val viewHolder = (binding.viewPager.getChildAt(0) as? androidx.recyclerview.widget.RecyclerView)
+                        ?.findViewHolderForAdapterPosition(position) as? ImagePagerAdapter.ImagePageViewHolder
 
-                        viewHolder?.getBinding()?.let { pageBinding ->
-                            processCurrentImage(pageBinding)
-                        }
+                    viewHolder?.getBinding()?.let { pageBinding ->
+                        detectBlackBorders(pageBinding)
                     }
                 }
             }
@@ -159,6 +160,10 @@ class EditorActivity : AppCompatActivity() {
 
         binding.btnCancel.setOnClickListener {
             deleteCurrentImage()
+        }
+
+        binding.btnDetectPose.setOnClickListener {
+            detectPoseAndGenerateCropBoxes()
         }
 
         // 展开/收起保存选项
@@ -209,16 +214,12 @@ class EditorActivity : AppCompatActivity() {
         })
     }
 
-    private fun processCurrentImage(pageBinding: PageEditorImageBinding) {
+    private fun detectBlackBorders(pageBinding: PageEditorImageBinding) {
         if (isProcessing) return
-        if (!isPoseDetectorReady) {
-            showStatus("Waiting for pose detector to initialize...")
-            return
-        }
 
         lifecycleScope.launch {
             isProcessing = true
-            showLoading(true, getString(R.string.detecting_pose))
+            showLoading(true, getString(R.string.detecting_borders))
 
             try {
                 val uri = imageUris[currentPosition]
@@ -240,35 +241,84 @@ class EditorActivity : AppCompatActivity() {
                 android.util.Log.d("EditorActivity", "Letterbox regions: ${letterboxResult?.letterboxRegions?.size ?: 0}")
 
                 currentBitmap = bitmap
+                currentLetterboxResult = letterboxResult
 
+                // 如果检测到黑边，自动生成覆盖内容区域的裁剪框
+                if (letterboxResult != null && letterboxResult.letterboxRegions.isNotEmpty()) {
+                    val bounds = letterboxResult.bounds
+                    val cropBox = CropBox(
+                        id = 0,
+                        rect = RectF(bounds.left.toFloat(), bounds.top.toFloat(), bounds.right.toFloat(), bounds.bottom.toFloat()),
+                        isSelected = true
+                    )
+                    currentCropBoxes = listOf(cropBox)
+                }
+
+                // 更新 UI - 显示黑边可视化和裁剪框
+                withContext(Dispatchers.Main) {
+                    updateOverlayView(pageBinding, emptyList(), letterboxResult?.letterboxRegions ?: emptyList())
+                }
+
+            } catch (e: Exception) {
+                e.printStackTrace()
+                showError("Error loading image: ${e.message}")
+            } finally {
+                isProcessing = false
+                showLoading(false)
+            }
+        }
+    }
+
+    private fun detectPoseAndGenerateCropBoxes() {
+        if (isProcessing) return
+
+        if (!isPoseDetectorReady) {
+            showStatus(getString(R.string.pose_detector_not_ready))
+            return
+        }
+
+        val bitmap = currentBitmap
+        if (bitmap == null) {
+            showError("No image loaded")
+            return
+        }
+
+        lifecycleScope.launch {
+            isProcessing = true
+            showLoading(true, getString(R.string.detecting_pose))
+
+            try {
                 // 检测姿态
                 val persons = poseDetector.detectPose(bitmap)
 
                 // 生成裁剪框（传入黑边信息，确保裁剪框不包含黑边）
                 val topExpansionMultiplier = settingsManager.getTopExpansionMultiplier()
                 currentCropBoxes = if (persons.isNotEmpty()) {
-                    CropCalculator.generateCropBoxes(persons, bitmap.width, bitmap.height, letterboxResult, topExpansionMultiplier)
+                    CropCalculator.generateCropBoxes(persons, bitmap.width, bitmap.height, currentLetterboxResult, topExpansionMultiplier)
                 } else {
-                    // 没有检测到人物，显示提示
                     showStatus(getString(R.string.no_person_detected))
                     emptyList()
                 }
 
                 // 更新 UI
                 withContext(Dispatchers.Main) {
-                    updateOverlayView(pageBinding, persons, letterboxResult?.letterboxRegions ?: emptyList())
+                    val viewHolder = (binding.viewPager.getChildAt(0) as? androidx.recyclerview.widget.RecyclerView)
+                        ?.findViewHolderForAdapterPosition(currentPosition) as? ImagePagerAdapter.ImagePageViewHolder
 
-                    if (persons.isEmpty()) {
-                        // 自动创建一个手动裁剪框
-                        createManualCropBox()
-                    } else {
-                        showStatus(getString(R.string.multiple_persons_detected, persons.size))
+                    viewHolder?.getBinding()?.let { pageBinding ->
+                        updateOverlayView(pageBinding, persons, currentLetterboxResult?.letterboxRegions ?: emptyList())
+
+                        if (persons.isEmpty()) {
+                            createManualCropBox()
+                        } else {
+                            showStatus(getString(R.string.multiple_persons_detected, persons.size))
+                        }
                     }
                 }
 
             } catch (e: Exception) {
                 e.printStackTrace()
-                showError("Error processing image: ${e.message}")
+                showError("Error detecting pose: ${e.message}")
             } finally {
                 isProcessing = false
                 showLoading(false)
@@ -467,9 +517,9 @@ class EditorActivity : AppCompatActivity() {
                         .skipMemoryCache(true)
                         .into(pageBinding.imageView)
 
-                    // 重新处理图片（骨骼检测）
+                    // 重新检测黑边
                     pageBinding.imageView.post {
-                        processCurrentImage(pageBinding)
+                        detectBlackBorders(pageBinding)
                     }
                 }
             } catch (e: Exception) {
@@ -672,15 +722,13 @@ class EditorActivity : AppCompatActivity() {
         // 更新导航按钮
         updateNavigationButtons()
 
-        // 处理新图片
-        if (isPoseDetectorReady) {
-            binding.viewPager.post {
-                val viewHolder = (binding.viewPager.getChildAt(0) as? androidx.recyclerview.widget.RecyclerView)
-                    ?.findViewHolderForAdapterPosition(newPosition) as? ImagePagerAdapter.ImagePageViewHolder
+        // 检测新图片的黑边
+        binding.viewPager.post {
+            val viewHolder = (binding.viewPager.getChildAt(0) as? androidx.recyclerview.widget.RecyclerView)
+                ?.findViewHolderForAdapterPosition(newPosition) as? ImagePagerAdapter.ImagePageViewHolder
 
-                viewHolder?.getBinding()?.let { pageBinding ->
-                    processCurrentImage(pageBinding)
-                }
+            viewHolder?.getBinding()?.let { pageBinding ->
+                detectBlackBorders(pageBinding)
             }
         }
     }

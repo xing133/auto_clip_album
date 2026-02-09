@@ -19,6 +19,9 @@
     <string name="overwrite_original">Overwrite Original</string>
     <string name="save_as_new">Save as New File</string>
     <string name="detecting_pose">Detecting pose…</string>
+    <string name="detecting_borders">Detecting borders…</string>
+    <string name="detect_pose_button">Detect Pose</string>
+    <string name="pose_detector_not_ready">Pose detector is still initializing, please wait…</string>
     <string name="no_person_detected">No person detected. Tap to create manual crop box.</string>
     <string name="multiple_persons_detected">%d persons detected. Tap to select.</string>
     <string name="person_number">Person %d</string>
