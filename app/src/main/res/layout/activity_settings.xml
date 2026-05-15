@@ -82,7 +82,7 @@
                         android:textAppearance="?attr/textAppearanceTitleLarge"
                         android:textColor="?attr/colorPrimary"
                         android:gravity="center"
-                        tools:text="2.5" />
+                        tools:text="8%" />
 
                     <!-- Slider -->
                     <com.google.android.material.slider.Slider
@@ -90,10 +90,10 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
-                        android:valueFrom="1.0"
-                        android:valueTo="5.0"
-                        android:stepSize="0.1"
-                        android:value="2.5"
+                        android:valueFrom="0.0"
+                        android:valueTo="0.30"
+                        android:stepSize="0.01"
+                        android:value="0.08"
                         app:labelBehavior="gone" />
 
                     <!-- Min/Max Labels -->

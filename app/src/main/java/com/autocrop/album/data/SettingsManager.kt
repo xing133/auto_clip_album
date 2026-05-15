@@ -13,10 +13,11 @@ class SettingsManager private constructor(context: Context) {
 
     companion object {
         private const val PREFS_NAME = "auto_crop_album_settings"
-        private const val KEY_TOP_EXPANSION_MULTIPLIER = "top_expansion_multiplier"
+        private const val KEY_EXPANSION_RATIO = "expansion_ratio"
 
-        // 默认值：2.5（与 CropCalculator 中的原始值一致）
-        const val DEFAULT_TOP_EXPANSION_MULTIPLIER = 2.5f
+        // 默认值：裁剪框在人物检测框外统一扩展的比例
+        const val DEFAULT_EXPANSION_RATIO =
+            com.autocrop.album.domain.CropCalculator.DEFAULT_EXPANSION_RATIO
 
         @Volatile
         private var instance: SettingsManager? = null
@@ -29,21 +30,21 @@ class SettingsManager private constructor(context: Context) {
     }
 
     /**
-     * 获取顶部外扩系数（用于眼嘴距离计算）
+     * 获取外扩系数（裁剪框在人物检测框外统一扩展的比例）
      */
-    fun getTopExpansionMultiplier(): Float {
+    fun getExpansionRatio(): Float {
         return sharedPreferences.getFloat(
-            KEY_TOP_EXPANSION_MULTIPLIER,
-            DEFAULT_TOP_EXPANSION_MULTIPLIER
+            KEY_EXPANSION_RATIO,
+            DEFAULT_EXPANSION_RATIO
         )
     }
 
     /**
-     * 设置顶部外扩系数
+     * 设置外扩系数
      */
-    fun setTopExpansionMultiplier(multiplier: Float) {
+    fun setExpansionRatio(ratio: Float) {
         sharedPreferences.edit()
-            .putFloat(KEY_TOP_EXPANSION_MULTIPLIER, multiplier)
+            .putFloat(KEY_EXPANSION_RATIO, ratio)
             .apply()
     }
 }

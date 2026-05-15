@@ -35,7 +35,7 @@ class SettingsActivity : AppCompatActivity() {
         binding.sliderTopExpansion.addOnChangeListener { _, value, fromUser ->
             if (fromUser) {
                 updateValueDisplay(value)
-                saveTopExpansionMultiplier(value)
+                saveExpansionRatio(value)
             }
         }
 
@@ -46,24 +46,25 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun loadSettings() {
-        val currentValue = settingsManager.getTopExpansionMultiplier()
+        val currentValue = settingsManager.getExpansionRatio()
         binding.sliderTopExpansion.value = currentValue
         updateValueDisplay(currentValue)
     }
 
     private fun updateValueDisplay(value: Float) {
-        binding.tvCurrentValue.text = String.format(Locale.getDefault(), "%.1f", value)
+        // 外扩系数以百分比展示，例如 0.08 -> "8%"
+        binding.tvCurrentValue.text = String.format(Locale.getDefault(), "%.0f%%", value * 100)
     }
 
-    private fun saveTopExpansionMultiplier(value: Float) {
-        settingsManager.setTopExpansionMultiplier(value)
+    private fun saveExpansionRatio(value: Float) {
+        settingsManager.setExpansionRatio(value)
     }
 
     private fun resetToDefault() {
-        val defaultValue = SettingsManager.DEFAULT_TOP_EXPANSION_MULTIPLIER
+        val defaultValue = SettingsManager.DEFAULT_EXPANSION_RATIO
         binding.sliderTopExpansion.value = defaultValue
         updateValueDisplay(defaultValue)
-        saveTopExpansionMultiplier(defaultValue)
+        saveExpansionRatio(defaultValue)
     }
 
     override fun onSupportNavigateUp(): Boolean {

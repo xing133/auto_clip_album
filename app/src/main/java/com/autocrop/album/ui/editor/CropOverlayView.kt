@@ -13,28 +13,21 @@ import android.view.View
 import androidx.core.content.ContextCompat
 import com.autocrop.album.R
 import com.autocrop.album.data.models.CropBox
-import com.autocrop.album.data.models.DetectedPerson
 import com.autocrop.album.domain.CropCalculator
-import com.autocrop.album.domain.PoseDetector
-import kotlin.math.abs
 import kotlin.math.sqrt
 
 /**
  * 裁剪框覆盖视图
  * 负责绘制：
  * 1. 黑边 debug 可视化（蓝色半透明矩形）
- * 2. 骨骼关键点和连接线
- * 3. 裁剪框（支持多个）
- * 4. 处理拖动、缩放交互
+ * 2. 裁剪框（支持多个）
+ * 3. 处理拖动、缩放交互
  */
 class CropOverlayView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
     defStyleAttr: Int = 0
 ) : View(context, attrs, defStyleAttr) {
-
-    // 检测到的人物列表
-    private var detectedPersons: List<DetectedPerson> = emptyList()
 
     // 裁剪框列表
     private var cropBoxes: MutableList<CropBox> = mutableListOf()
@@ -59,18 +52,6 @@ class CropOverlayView @JvmOverloads constructor(
     private var originalCropRect = RectF()
 
     // 画笔
-    private val landmarkPointPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = ContextCompat.getColor(context, R.color.pose_landmark_point)
-        style = Paint.Style.FILL
-        strokeWidth = 8f
-    }
-
-    private val landmarkConnectionPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = ContextCompat.getColor(context, R.color.pose_landmark_connection)
-        style = Paint.Style.STROKE
-        strokeWidth = 4f
-    }
-
     private val cropBoxPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = ContextCompat.getColor(context, R.color.crop_box_border)
         style = Paint.Style.STROKE
@@ -127,14 +108,6 @@ class CropOverlayView @JvmOverloads constructor(
     }
 
     /**
-     * 设置检测到的人物数据
-     */
-    fun setDetectedPersons(persons: List<DetectedPerson>) {
-        detectedPersons = persons
-        invalidate()
-    }
-
-    /**
      * 设置裁剪框列表
      */
     fun setCropBoxes(boxes: List<CropBox>) {
@@ -185,16 +158,10 @@ class CropOverlayView @JvmOverloads constructor(
         // 1. 绘制黑边 debug 可视化（最先绘制，在底层）
         drawLetterboxDebug(canvas)
 
-        // 2. 绘制裁剪框（含遮罩，先画）
+        // 2. 绘制裁剪框（含遮罩）
         drawCropBoxes(canvas)
 
-        // 3. 绘制骨骼连接线（画在遮罩之上，清晰可见）
-        drawPoseConnections(canvas)
-
-        // 4. 绘制骨骼关键点（画在遮罩之上，清晰可见）
-        drawPoseLandmarks(canvas)
-
-        // 5. 绘制人物编号
+        // 3. 绘制人物编号
         drawPersonLabels(canvas)
     }
 
@@ -220,48 +187,6 @@ class CropOverlayView @JvmOverloads constructor(
             rect.right * imageScale + imageOffsetX,
             rect.bottom * imageScale + imageOffsetY
         )
-    }
-
-    private fun drawPoseConnections(canvas: Canvas) {
-        detectedPersons.forEach { person ->
-            val landmarkMap = person.landmarks.associateBy { it.type }
-
-            PoseDetector.POSE_CONNECTIONS.forEach { (start, end) ->
-                val startLandmark = landmarkMap[start]
-                val endLandmark = landmarkMap[end]
-
-                if (startLandmark != null && endLandmark != null &&
-                    startLandmark.visibility > DetectedPerson.VISIBILITY_THRESHOLD &&
-                    endLandmark.visibility > DetectedPerson.VISIBILITY_THRESHOLD
-                ) {
-                    // 只绘制两个端点都在图片范围内的连线
-                    if (isPointInImageBounds(startLandmark.position) &&
-                        isPointInImageBounds(endLandmark.position)) {
-                        val startPoint = imageToViewCoordinates(startLandmark.position)
-                        val endPoint = imageToViewCoordinates(endLandmark.position)
-
-                        canvas.drawLine(
-                            startPoint.x, startPoint.y,
-                            endPoint.x, endPoint.y,
-                            landmarkConnectionPaint
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    private fun drawPoseLandmarks(canvas: Canvas) {
-        detectedPersons.forEach { person ->
-            person.landmarks.forEach { landmark ->
-                if (landmark.visibility > DetectedPerson.VISIBILITY_THRESHOLD &&
-                    isPointInImageBounds(landmark.position)) {
-                    // 只绘制在图片范围内的骨骼点
-                    val point = imageToViewCoordinates(landmark.position)
-                    canvas.drawCircle(point.x, point.y, 8f, landmarkPointPaint)
-                }
-            }
-        }
     }
 
     private fun drawCropBoxes(canvas: Canvas) {
@@ -502,24 +427,6 @@ class CropOverlayView @JvmOverloads constructor(
         val dx = p1.x - p2.x
         val dy = p1.y - p2.y
         return sqrt(dx * dx + dy * dy)
-    }
-
-    /**
-     * 检查点是否在图片范围内
-     */
-    private fun isPointInImageBounds(point: PointF): Boolean {
-        return point.x >= 0f && point.x <= imageWidth &&
-               point.y >= 0f && point.y <= imageHeight
-    }
-
-    /**
-     * 图片坐标转换为视图坐标
-     */
-    private fun imageToViewCoordinates(point: PointF): PointF {
-        return PointF(
-            point.x * imageScale + imageOffsetX,
-            point.y * imageScale + imageOffsetY
-        )
     }
 
     /**

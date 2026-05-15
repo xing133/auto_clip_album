@@ -30,7 +30,7 @@ import com.autocrop.album.databinding.ActivityEditorBinding
 import com.autocrop.album.databinding.PageEditorImageBinding
 import com.autocrop.album.domain.CropCalculator
 import com.autocrop.album.domain.ImageProcessor
-import com.autocrop.album.domain.PoseDetector
+import com.autocrop.album.domain.PersonDetector
 import com.autocrop.album.ui.editor.ImagePagerAdapter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -44,7 +44,7 @@ class EditorActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityEditorBinding
     private lateinit var adapter: ImagePagerAdapter
-    private lateinit var poseDetector: PoseDetector
+    private lateinit var personDetector: PersonDetector
     private lateinit var imageProcessor: ImageProcessor
     private lateinit var repository: MediaStoreRepository
     private lateinit var settingsManager: SettingsManager
@@ -60,7 +60,7 @@ class EditorActivity : AppCompatActivity() {
 
     private lateinit var gestureDetector: GestureDetectorCompat
     private var isProcessing = false
-    private var isPoseDetectorReady = false
+    private var isPersonDetectorReady = false
     private lateinit var editPermissionLauncher: ActivityResultLauncher<IntentSenderRequest>
     private lateinit var deletePermissionLauncher: ActivityResultLauncher<IntentSenderRequest>
     private var pendingSaveRequest: PendingSaveRequest? = null
@@ -72,7 +72,7 @@ class EditorActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         // 初始化
-        poseDetector = PoseDetector(this)
+        personDetector = PersonDetector(this)
         imageProcessor = ImageProcessor(this)
         repository = MediaStoreRepository(this)
         settingsManager = SettingsManager.getInstance(this)
@@ -92,20 +92,20 @@ class EditorActivity : AppCompatActivity() {
         setupButtons()
         setupGestureDetector()
 
-        // 初始化 PoseDetector（后台静默进行，不阻塞）
+        // 初始化 PersonDetector（后台静默进行，不阻塞）
         binding.btnDetectPose.isEnabled = false
         lifecycleScope.launch {
             try {
-                poseDetector.initialize()
-                isPoseDetectorReady = true
+                personDetector.initialize()
+                isPersonDetectorReady = true
                 binding.btnDetectPose.isEnabled = true
             } catch (e: Exception) {
-                showError("Failed to initialize pose detector: ${e.message}")
-                isPoseDetectorReady = false
+                showError("Failed to initialize person detector: ${e.message}")
+                isPersonDetectorReady = false
             }
         }
 
-        // 立即检测黑边（不等待 PoseDetector）
+        // 立即检测黑边（不等待 PersonDetector）
         binding.viewPager.post {
             val viewHolder = (binding.viewPager.getChildAt(0) as? androidx.recyclerview.widget.RecyclerView)
                 ?.findViewHolderForAdapterPosition(currentPosition) as? ImagePagerAdapter.ImagePageViewHolder
@@ -137,7 +137,7 @@ class EditorActivity : AppCompatActivity() {
                 // 更新导航按钮的可见性
                 updateNavigationButtons()
 
-                // 自动检测黑边（不需要等 PoseDetector）
+                // 自动检测黑边（不需要等 PersonDetector）
                 binding.viewPager.post {
                     val viewHolder = (binding.viewPager.getChildAt(0) as? androidx.recyclerview.widget.RecyclerView)
                         ?.findViewHolderForAdapterPosition(position) as? ImagePagerAdapter.ImagePageViewHolder
@@ -163,7 +163,7 @@ class EditorActivity : AppCompatActivity() {
         }
 
         binding.btnDetectPose.setOnClickListener {
-            detectPoseAndGenerateCropBoxes()
+            detectPersonsAndGenerateCropBoxes()
         }
 
         // 展开/收起保存选项
@@ -256,7 +256,7 @@ class EditorActivity : AppCompatActivity() {
 
                 // 更新 UI - 显示黑边可视化和裁剪框
                 withContext(Dispatchers.Main) {
-                    updateOverlayView(pageBinding, emptyList(), letterboxResult?.letterboxRegions ?: emptyList())
+                    updateOverlayView(pageBinding, letterboxResult?.letterboxRegions ?: emptyList())
                 }
 
             } catch (e: Exception) {
@@ -269,10 +269,10 @@ class EditorActivity : AppCompatActivity() {
         }
     }
 
-    private fun detectPoseAndGenerateCropBoxes() {
+    private fun detectPersonsAndGenerateCropBoxes() {
         if (isProcessing) return
 
-        if (!isPoseDetectorReady) {
+        if (!isPersonDetectorReady) {
             showStatus(getString(R.string.pose_detector_not_ready))
             return
         }
@@ -288,13 +288,13 @@ class EditorActivity : AppCompatActivity() {
             showLoading(true, getString(R.string.detecting_pose))
 
             try {
-                // 检测姿态
-                val persons = poseDetector.detectPose(bitmap)
+                // 检测人物
+                val persons = personDetector.detectPersons(bitmap)
 
                 // 生成裁剪框（传入黑边信息，确保裁剪框不包含黑边）
-                val topExpansionMultiplier = settingsManager.getTopExpansionMultiplier()
+                val expansionRatio = settingsManager.getExpansionRatio()
                 currentCropBoxes = if (persons.isNotEmpty()) {
-                    CropCalculator.generateCropBoxes(persons, bitmap.width, bitmap.height, currentLetterboxResult, topExpansionMultiplier)
+                    CropCalculator.generateCropBoxes(persons, bitmap.width, bitmap.height, currentLetterboxResult, expansionRatio)
                 } else {
                     showStatus(getString(R.string.no_person_detected))
                     emptyList()
@@ -306,7 +306,7 @@ class EditorActivity : AppCompatActivity() {
                         ?.findViewHolderForAdapterPosition(currentPosition) as? ImagePagerAdapter.ImagePageViewHolder
 
                     viewHolder?.getBinding()?.let { pageBinding ->
-                        updateOverlayView(pageBinding, persons, currentLetterboxResult?.letterboxRegions ?: emptyList())
+                        updateOverlayView(pageBinding, currentLetterboxResult?.letterboxRegions ?: emptyList())
 
                         if (persons.isEmpty()) {
                             createManualCropBox()
@@ -318,7 +318,7 @@ class EditorActivity : AppCompatActivity() {
 
             } catch (e: Exception) {
                 e.printStackTrace()
-                showError("Error detecting pose: ${e.message}")
+                showError("Error detecting persons: ${e.message}")
             } finally {
                 isProcessing = false
                 showLoading(false)
@@ -328,7 +328,6 @@ class EditorActivity : AppCompatActivity() {
 
     private fun updateOverlayView(
         pageBinding: PageEditorImageBinding,
-        persons: List<Any>,
         letterboxRegions: List<android.graphics.Rect> = emptyList()
     ) {
         val imageView = pageBinding.imageView
@@ -364,11 +363,6 @@ class EditorActivity : AppCompatActivity() {
 
             // 设置黑边区域（debug可视化）
             overlayView.setLetterboxRegions(letterboxRegions)
-
-            // 设置检测数据
-            if (persons.isNotEmpty()) {
-                overlayView.setDetectedPersons(persons as List<com.autocrop.album.data.models.DetectedPerson>)
-            }
 
             // 设置裁剪框
             if (currentCropBoxes.isNotEmpty()) {
@@ -627,7 +621,7 @@ class EditorActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        poseDetector.close()
+        personDetector.close()
         currentBitmap?.recycle()
     }
 

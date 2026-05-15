@@ -1,11 +1,11 @@
 # Auto Crop Album - 自动裁剪相册
 
-基于 MediaPipe 骨骼识别的智能相册裁剪应用。
+基于 MediaPipe 人物检测的智能相册裁剪应用。
 
 ## 功能特性
 
 - 📸 **图片浏览**：从系统相册加载图片，支持多种排序方式
-- 🦴 **骨骼识别**：使用 MediaPipe Pose Detection 检测人物姿态
+- 🧍 **人物检测**：使用 MediaPipe Object Detector（EfficientDet）检测人物并直接得到边界框
 - ✂️ **智能裁剪**：自动生成裁剪框，支持多人检测
 - 🖐️ **手动调整**：拖动、缩放裁剪框，或手动创建新裁剪框
 - 💾 **灵活保存**：可选择覆盖原图或保存为新文件
@@ -18,7 +18,7 @@
 - **目标 SDK**: API 34 (Android 14)
 - **架构**: arm64-v8a only
 - **核心库**:
-  - MediaPipe Tasks Vision (姿态检测)
+  - MediaPipe Tasks Vision (Object Detector / 人物检测)
   - Glide (图片加载)
   - ViewPager2 (图片滑动)
   - Material Design 3 (UI)
@@ -28,10 +28,10 @@
 
 ### 1. 下载 MediaPipe 模型文件
 
-应用需要 MediaPipe Pose Landmarker 模型文件。请按照以下步骤操作：
+应用需要 MediaPipe Object Detector（EfficientDet）模型文件。请按照以下步骤操作：
 
-1. 访问 [MediaPipe Models](https://developers.google.com/mediapipe/solutions/vision/pose_landmarker#models)
-2. 下载 `pose_landmarker_heavy.task` 模型文件
+1. 访问 [MediaPipe Object Detector Models](https://ai.google.dev/edge/mediapipe/solutions/vision/object_detector#models)
+2. 下载 `efficientdet_lite0.tflite` 模型文件
 3. 将文件放置到 `app/src/main/assets/` 目录
 
 ```bash
@@ -40,10 +40,10 @@ mkdir -p app/src/main/assets
 
 # 下载模型文件
 cd app/src/main/assets
-wget https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task
+wget https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/int8/latest/efficientdet_lite0.tflite
 ```
 
-> **注意**: 模型文件大小约 30MB，不包含在 Git 仓库中。
+> **注意**: 模型文件约 4–7MB，不包含在 Git 仓库中。若需更高精度可改用 `efficientdet_lite2.tflite`（同时修改 `PersonDetector.MODEL_ASSET_PATH`）。
 
 ### 2. 同步依赖
 
@@ -67,7 +67,8 @@ app/
 │   │   │   ├── models/        # 数据模型
 │   │   │   └── MediaStoreRepository.kt
 │   │   ├── domain/            # 业务逻辑
-│   │   │   ├── PoseDetector.kt
+│   │   │   ├── PersonDetector.kt
+│   │   │   ├── LetterboxDetector.kt
 │   │   │   ├── CropCalculator.kt
 │   │   │   └── ImageProcessor.kt
 │   │   └── ui/                # UI 层
