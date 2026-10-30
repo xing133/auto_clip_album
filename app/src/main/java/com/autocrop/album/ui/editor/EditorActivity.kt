@@ -98,27 +98,16 @@ class EditorActivity : AppCompatActivity() {
             try {
                 personDetector.initialize()
                 isPersonDetectorReady = true
-                binding.btnDetectPose.isEnabled = true
+                binding.btnDetectPose.isEnabled = currentBitmap != null && !isProcessing
             } catch (e: Exception) {
                 showError("Failed to initialize person detector: ${e.message}")
                 isPersonDetectorReady = false
             }
         }
-
-        // 立即检测黑边（不等待 PersonDetector）
-        binding.viewPager.post {
-            val viewHolder = (binding.viewPager.getChildAt(0) as? androidx.recyclerview.widget.RecyclerView)
-                ?.findViewHolderForAdapterPosition(currentPosition) as? ImagePagerAdapter.ImagePageViewHolder
-            viewHolder?.getBinding()?.let { pageBinding ->
-                detectBlackBorders(pageBinding)
-            }
-        }
     }
 
     private fun setupViewPager() {
-        adapter = ImagePagerAdapter(imageUris) { position, pageBinding ->
-            // 不在这里处理，等初始化完成后再处理
-        }
+        adapter = createImagePagerAdapter()
 
         binding.viewPager.adapter = adapter
         binding.viewPager.setCurrentItem(currentPosition, false)
@@ -133,24 +122,39 @@ class EditorActivity : AppCompatActivity() {
                 currentLetterboxResult = null
                 currentBitmap?.recycle()
                 currentBitmap = null
+                binding.btnDetectPose.isEnabled = false
 
                 // 更新导航按钮的可见性
                 updateNavigationButtons()
 
-                // 自动检测黑边（不需要等 PersonDetector）
-                binding.viewPager.post {
-                    val viewHolder = (binding.viewPager.getChildAt(0) as? androidx.recyclerview.widget.RecyclerView)
-                        ?.findViewHolderForAdapterPosition(position) as? ImagePagerAdapter.ImagePageViewHolder
+                loadCurrentImageWhenReady()
+            }
 
-                    viewHolder?.getBinding()?.let { pageBinding ->
-                        detectBlackBorders(pageBinding)
-                    }
+            override fun onPageScrollStateChanged(state: Int) {
+                updateNavigationButtons()
+                if (state == ViewPager2.SCROLL_STATE_IDLE) {
+                    loadCurrentImageWhenReady()
                 }
             }
         })
 
         // 初始化导航按钮
         updateNavigationButtons()
+    }
+
+    private fun createImagePagerAdapter() = ImagePagerAdapter(imageUris) { position, _ ->
+        // A selected page may only be bound after onPageSelected has run.
+        if (position == currentPosition) loadCurrentImageWhenReady()
+    }
+
+    private fun loadCurrentImageWhenReady() {
+        binding.viewPager.post {
+            if (isProcessing || currentBitmap != null ||
+                binding.viewPager.scrollState != ViewPager2.SCROLL_STATE_IDLE) return@post
+            val holder = (binding.viewPager.getChildAt(0) as? androidx.recyclerview.widget.RecyclerView)
+                ?.findViewHolderForAdapterPosition(currentPosition) as? ImagePagerAdapter.ImagePageViewHolder
+            holder?.getBinding()?.let { detectBlackBorders(it) }
+        }
     }
 
     private fun setupButtons() {
@@ -173,13 +177,13 @@ class EditorActivity : AppCompatActivity() {
 
         // 导航按钮
         binding.btnPrevImage.setOnClickListener {
-            if (currentPosition > 0) {
+            if (!isProcessing && binding.viewPager.scrollState == ViewPager2.SCROLL_STATE_IDLE && currentPosition > 0) {
                 binding.viewPager.setCurrentItem(currentPosition - 1, true)
             }
         }
 
         binding.btnNextImage.setOnClickListener {
-            if (currentPosition < imageUris.size - 1) {
+            if (!isProcessing && binding.viewPager.scrollState == ViewPager2.SCROLL_STATE_IDLE && currentPosition < imageUris.size - 1) {
                 binding.viewPager.setCurrentItem(currentPosition + 1, true)
             }
         }
@@ -197,6 +201,9 @@ class EditorActivity : AppCompatActivity() {
     }
 
     private fun updateNavigationButtons() {
+        val canNavigate = !isProcessing && binding.viewPager.scrollState == ViewPager2.SCROLL_STATE_IDLE
+        binding.btnPrevImage.isEnabled = canNavigate
+        binding.btnNextImage.isEnabled = canNavigate
         // 第一张图片时隐藏"上一张"按钮
         binding.btnPrevImage.visibility = if (currentPosition > 0) View.VISIBLE else View.GONE
 
@@ -240,8 +247,10 @@ class EditorActivity : AppCompatActivity() {
                 android.util.Log.d("EditorActivity", "Image loaded successfully: ${bitmap.width}x${bitmap.height}")
                 android.util.Log.d("EditorActivity", "Letterbox regions: ${letterboxResult?.letterboxRegions?.size ?: 0}")
 
+                currentBitmap?.recycle()
                 currentBitmap = bitmap
                 currentLetterboxResult = letterboxResult
+                currentCropBoxes = emptyList()
 
                 // 如果检测到黑边，自动生成覆盖内容区域的裁剪框
                 if (letterboxResult != null && letterboxResult.letterboxRegions.isNotEmpty()) {
@@ -339,6 +348,7 @@ class EditorActivity : AppCompatActivity() {
 
         // 计算图片在 ImageView 中的位置和缩放
         imageView.post {
+            if (currentBitmap !== detectionBitmap || detectionBitmap.isRecycled) return@post
             val imageWidth = detectionBitmap.width
             val imageHeight = detectionBitmap.height
 
@@ -365,9 +375,7 @@ class EditorActivity : AppCompatActivity() {
             overlayView.setLetterboxRegions(letterboxRegions)
 
             // 设置裁剪框
-            if (currentCropBoxes.isNotEmpty()) {
-                overlayView.setCropBoxes(currentCropBoxes)
-            }
+            overlayView.setCropBoxes(currentCropBoxes)
         }
     }
 
@@ -597,6 +605,8 @@ class EditorActivity : AppCompatActivity() {
     }
 
     private fun showLoading(show: Boolean, message: String? = null) {
+        updateNavigationButtons()
+        binding.btnDetectPose.isEnabled = !isProcessing && currentBitmap != null && isPersonDetectorReady
         binding.progressBar.visibility = if (show) View.VISIBLE else View.GONE
         if (show && message != null) {
             showStatus(message)
@@ -708,7 +718,7 @@ class EditorActivity : AppCompatActivity() {
         currentBitmap = null
 
         // 更新 adapter 并跳转
-        adapter = ImagePagerAdapter(imageUris) { _, _ -> }
+        adapter = createImagePagerAdapter()
         binding.viewPager.adapter = adapter
         binding.viewPager.setCurrentItem(newPosition, false)
         currentPosition = newPosition
