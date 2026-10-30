@@ -30,7 +30,6 @@
 
     <!-- Cropping Messages -->
     <string name="cropping_image">Cropping image…</string>
-    <string name="crop_success">Image cropped successfully</string>
     <string name="crop_failed">Failed to crop image</string>
     <string name="saving_image">Saving image…</string>
 

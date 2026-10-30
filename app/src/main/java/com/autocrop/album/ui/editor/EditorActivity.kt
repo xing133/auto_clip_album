@@ -488,9 +488,6 @@ class EditorActivity : AppCompatActivity() {
     }
 
     private fun handleSaveSuccess(overwriteOriginal: Boolean) {
-        showStatus(getString(R.string.crop_success))
-        Toast.makeText(this@EditorActivity, getString(R.string.crop_success), Toast.LENGTH_SHORT).show()
-
         // 标记图片已修改
         hasModified = true
 
