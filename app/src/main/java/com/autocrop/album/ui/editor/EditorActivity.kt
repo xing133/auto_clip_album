@@ -36,6 +36,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.math.abs
 
 /**
  * 编辑器 Activity - 全屏图片编辑和裁剪
@@ -59,6 +60,10 @@ class EditorActivity : AppCompatActivity() {
     private var currentLetterboxResult: com.autocrop.album.domain.LetterboxDetector.DetectionResult? = null
 
     private lateinit var gestureDetector: GestureDetectorCompat
+    private var imageSwipeCandidate = false
+    private var imageSwipeStartX = 0f
+    private var imageSwipeStartY = 0f
+    private var imageSwipePosition = 0
     private var isProcessing = false
     private var isPersonDetectorReady = false
     private lateinit var editPermissionLauncher: ActivityResultLauncher<IntentSenderRequest>
@@ -112,7 +117,7 @@ class EditorActivity : AppCompatActivity() {
         binding.viewPager.adapter = adapter
         binding.viewPager.setCurrentItem(currentPosition, false)
 
-        // 禁用滑动功能，使用按钮切换图片
+        // Keep paging under our control so gestures starting near crop boxes edit them.
         binding.viewPager.isUserInputEnabled = false
 
         binding.viewPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
@@ -636,6 +641,42 @@ class EditorActivity : AppCompatActivity() {
     }
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                imageSwipeCandidate = false
+                if (!isProcessing && currentBitmap != null &&
+                    binding.viewPager.scrollState == ViewPager2.SCROLL_STATE_IDLE) {
+                    val holder = (binding.viewPager.getChildAt(0) as? androidx.recyclerview.widget.RecyclerView)
+                        ?.findViewHolderForAdapterPosition(currentPosition) as? ImagePagerAdapter.ImagePageViewHolder
+                    holder?.getBinding()?.cropOverlayView?.let { overlay ->
+                        val location = IntArray(2)
+                        overlay.getLocationOnScreen(location)
+                        val x = ev.rawX - location[0]
+                        val y = ev.rawY - location[1]
+                        imageSwipeCandidate = x >= 0 && x < overlay.width &&
+                            y >= 0 && y < overlay.height && !overlay.isNearCropBox(x, y)
+                    }
+                }
+                imageSwipeStartX = ev.rawX
+                imageSwipeStartY = ev.rawY
+                imageSwipePosition = currentPosition
+            }
+            MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_CANCEL -> imageSwipeCandidate = false
+            MotionEvent.ACTION_UP -> {
+                val dx = ev.rawX - imageSwipeStartX
+                val dy = ev.rawY - imageSwipeStartY
+                val minDistance = 48f * resources.displayMetrics.density
+                if (imageSwipeCandidate && !isProcessing && currentPosition == imageSwipePosition &&
+                    binding.viewPager.scrollState == ViewPager2.SCROLL_STATE_IDLE &&
+                    abs(dx) >= minDistance && abs(dx) > abs(dy) * 1.5f) {
+                    val nextPosition = currentPosition + if (dx < 0) 1 else -1
+                    if (nextPosition in imageUris.indices) {
+                        binding.viewPager.setCurrentItem(nextPosition, true)
+                    }
+                }
+                imageSwipeCandidate = false
+            }
+        }
         gestureDetector.onTouchEvent(ev)
         return super.dispatchTouchEvent(ev)
     }

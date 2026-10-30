@@ -327,6 +327,17 @@ class CropOverlayView @JvmOverloads constructor(
         return true
     }
 
+    /** Coordinates are local to this view; include the resize handles in the protected area. */
+    fun isNearCropBox(x: Float, y: Float): Boolean {
+        val point = PointF(x, y)
+        val margin = 24f * resources.displayMetrics.density
+        return cropBoxes.any { box ->
+            val rect = imageRectToViewRect(box.rect)
+            val expanded = RectF(rect).apply { inset(-margin, -margin) }
+            expanded.contains(x, y) || findTouchedCorner(point, rect) != Corner.NONE
+        }
+    }
+
     private fun findTouchedCropBox(point: PointF): CropBox? {
         // 从后往前查找（优先选择最上层的）
         return cropBoxes.asReversed().firstOrNull { cropBox ->
