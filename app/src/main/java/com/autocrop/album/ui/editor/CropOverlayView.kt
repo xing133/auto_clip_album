@@ -9,6 +9,7 @@ import android.graphics.Rect
 import android.graphics.RectF
 import android.util.AttributeSet
 import android.view.MotionEvent
+import android.view.ScaleGestureDetector
 import android.view.View
 import androidx.core.content.ContextCompat
 import com.autocrop.album.R
@@ -44,6 +45,25 @@ class CropOverlayView @JvmOverloads constructor(
     private var imageOffsetX: Float = 0f
     private var imageOffsetY: Float = 0f
     private var imageScale: Float = 1f
+
+    private val viewport = ImageViewport()
+    var onImageTransformChanged: ((Int, Int, Float, Float, Float) -> Unit)? = null
+    val isZoomed: Boolean get() = viewport.zoom > 1.001f
+    private var multiTouchGesture = false
+    private var panning = false
+    private var lastFocusX = 0f
+    private var lastFocusY = 0f
+    private val scaleDetector = ScaleGestureDetector(context,
+        object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            override fun onScale(detector: ScaleGestureDetector): Boolean {
+                viewport.zoomAt(detector.scaleFactor, detector.focusX, detector.focusY)
+                applyViewport()
+                return true
+            }
+        }).apply {
+            // Double-tap remains the editor's manual-crop gesture.
+            isQuickScaleEnabled = false
+        }
 
     // 触摸状态
     private var touchMode = TouchMode.NONE
@@ -136,17 +156,59 @@ class CropOverlayView @JvmOverloads constructor(
     /**
      * 获取当前选中的裁剪框
      */
-    fun getSelectedCropBox(): CropBox? = selectedCropBox
+    fun getSelectedCropBox(): CropBox? = selectedCropBox?.let { it.copyWithRect(visibleCropRect(it)) }
+
+    fun getVisibleImageRect(): RectF = viewport.visibleRegion().let {
+        RectF(it.left, it.top, it.right, it.bottom)
+    }
+
+    var interactionEnabled = true
+
+    private fun visibleCropRect(box: CropBox): RectF {
+        val rect = box.rect
+        val region = viewport.visibleRegion().constrain(
+            ImageViewport.Region(rect.left, rect.top, rect.right, rect.bottom))
+        return RectF(region.left, region.top, region.right, region.bottom)
+    }
 
     /**
      * 设置图片尺寸和变换信息（用于坐标转换）
      */
-    fun setImageTransform(width: Int, height: Int, offsetX: Float, offsetY: Float, scale: Float) {
-        imageWidth = width
-        imageHeight = height
-        imageOffsetX = offsetX
-        imageOffsetY = offsetY
-        imageScale = scale
+    fun setImageTransform(width: Int, height: Int) {
+        if (width <= 0 || height <= 0 || this.width <= 0 || this.height <= 0) return
+        if (imageWidth != width || imageHeight != height) {
+            imageWidth = width
+            imageHeight = height
+            viewport.reset(width.toFloat(), height.toFloat(), this.width.toFloat(), this.height.toFloat())
+        }
+        applyViewport()
+    }
+
+    fun resetImage() {
+        imageWidth = 0
+        imageHeight = 0
+        cropBoxes.clear()
+        selectedCropBox = null
+        letterboxRegions = emptyList()
+        touchMode = TouchMode.NONE
+        multiTouchGesture = false
+        panning = false
+        invalidate()
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        if (imageWidth > 0 && imageHeight > 0 && w > 0 && h > 0) {
+            viewport.reset(imageWidth.toFloat(), imageHeight.toFloat(), w.toFloat(), h.toFloat())
+            applyViewport()
+        }
+    }
+
+    private fun applyViewport() {
+        imageScale = viewport.scale
+        imageOffsetX = viewport.offsetX
+        imageOffsetY = viewport.offsetY
+        onImageTransformChanged?.invoke(imageWidth, imageHeight, imageScale, imageOffsetX, imageOffsetY)
         invalidate()
     }
 
@@ -191,7 +253,7 @@ class CropOverlayView @JvmOverloads constructor(
 
     private fun drawCropBoxes(canvas: Canvas) {
         cropBoxes.forEach { cropBox ->
-            val rect = imageRectToViewRect(cropBox.rect)
+            val rect = imageRectToViewRect(visibleCropRect(cropBox))
             val isSelected = cropBox == selectedCropBox
 
             // 绘制填充
@@ -208,15 +270,21 @@ class CropOverlayView @JvmOverloads constructor(
 
             // 绘制边框
             val paint = if (isSelected) cropBoxSelectedPaint else cropBoxPaint
-            canvas.drawRect(rect, paint)
+            val border = RectF(rect).apply { inset(paint.strokeWidth / 2f, paint.strokeWidth / 2f) }
+            canvas.drawRect(border, paint)
 
             // 绘制角点（仅选中时）
             if (isSelected) {
                 val cornerRadius = 20f
-                canvas.drawCircle(rect.left, rect.top, cornerRadius, cornerPaint)
-                canvas.drawCircle(rect.right, rect.top, cornerRadius, cornerPaint)
-                canvas.drawCircle(rect.left, rect.bottom, cornerRadius, cornerPaint)
-                canvas.drawCircle(rect.right, rect.bottom, cornerRadius, cornerPaint)
+                fun drawHandle(x: Float, y: Float) {
+                    val radius = minOf(cornerRadius, width / 2f, height / 2f)
+                    canvas.drawCircle(x.coerceIn(radius, width - radius),
+                        y.coerceIn(radius, height - radius), radius, cornerPaint)
+                }
+                drawHandle(rect.left, rect.top)
+                drawHandle(rect.right, rect.top)
+                drawHandle(rect.left, rect.bottom)
+                drawHandle(rect.right, rect.bottom)
             }
         }
     }
@@ -224,7 +292,7 @@ class CropOverlayView @JvmOverloads constructor(
     private fun drawPersonLabels(canvas: Canvas) {
         cropBoxes.forEach { cropBox ->
             if (cropBox.personId != null) {
-                val rect = imageRectToViewRect(cropBox.rect)
+                val rect = imageRectToViewRect(visibleCropRect(cropBox))
                 val label = "Person ${cropBox.personId + 1}"
                 val textWidth = personLabelPaint.measureText(label)
                 val textX = rect.left + 10f
@@ -244,6 +312,38 @@ class CropOverlayView @JvmOverloads constructor(
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (!interactionEnabled) return true
+        if (imageWidth <= 0 || imageHeight <= 0) return false
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            multiTouchGesture = false
+            panning = false
+        }
+        if (event.actionMasked == MotionEvent.ACTION_POINTER_DOWN) {
+            multiTouchGesture = true
+            touchMode = TouchMode.NONE
+            touchingCorner = null
+        }
+        // Two fingers can pan even when a crop box covers the entire viewport.
+        if (event.pointerCount >= 2) {
+            val activePointers = (0 until event.pointerCount).filter {
+                event.actionMasked != MotionEvent.ACTION_POINTER_UP || it != event.actionIndex
+            }
+            val focusX = activePointers.map { event.getX(it) }.average().toFloat()
+            val focusY = activePointers.map { event.getY(it) }.average().toFloat()
+            if (event.actionMasked == MotionEvent.ACTION_MOVE) {
+                viewport.pan(focusX - lastFocusX, focusY - lastFocusY)
+                applyViewport()
+            }
+            lastFocusX = focusX
+            lastFocusY = focusY
+        }
+        scaleDetector.onTouchEvent(event)
+        if (multiTouchGesture) {
+            if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
+                multiTouchGesture = false
+            }
+            return true
+        }
         val touchPoint = PointF(event.x, event.y)
 
         when (event.action) {
@@ -254,7 +354,7 @@ class CropOverlayView @JvmOverloads constructor(
                 val touchedBox = findTouchedCropBox(touchPoint)
                 if (touchedBox != null) {
                     selectCropBox(touchedBox)
-                    val viewRect = imageRectToViewRect(touchedBox.rect)
+                    val viewRect = imageRectToViewRect(visibleCropRect(touchedBox))
 
                     // 检查是否触摸角点
                     touchingCorner = findTouchedCorner(touchPoint, viewRect)
@@ -266,19 +366,26 @@ class CropOverlayView @JvmOverloads constructor(
                         TouchMode.NONE
                     }
 
-                    originalCropRect.set(touchedBox.rect)
+                    originalCropRect.set(visibleCropRect(touchedBox))
                     return true
                 } else {
-                    // 没有触摸到裁剪框，创建新的手动裁剪框
-                    performClick()
-                    return false
+                    // Consume the stream so a second finger can start zooming anywhere.
+                    touchMode = TouchMode.NONE
+                    panning = isZoomed
+                    return true
                 }
             }
 
             MotionEvent.ACTION_MOVE -> {
+                if (panning) {
+                    viewport.pan(touchPoint.x - touchStart.x, touchPoint.y - touchStart.y)
+                    touchStart.set(touchPoint)
+                    applyViewport()
+                    return true
+                }
                 if (selectedCropBox != null && touchMode != TouchMode.NONE) {
-                    val dx = (touchPoint.x - touchStart.x) / imageScale
-                    val dy = (touchPoint.y - touchStart.y) / imageScale
+                    val dx = viewport.imageX(touchPoint.x) - viewport.imageX(touchStart.x)
+                    val dy = viewport.imageY(touchPoint.y) - viewport.imageY(touchStart.y)
 
                     val newRect = when (touchMode) {
                         TouchMode.DRAG -> {
@@ -302,8 +409,9 @@ class CropOverlayView @JvmOverloads constructor(
 
                     val index = cropBoxes.indexOf(selectedCropBox)
                     if (index >= 0) {
-                        cropBoxes[index] = adjustedBox
-                        selectedCropBox = adjustedBox
+                        val visibleBox = adjustedBox.copyWithRect(visibleCropRect(adjustedBox))
+                        cropBoxes[index] = visibleBox
+                        selectedCropBox = visibleBox
                         invalidate()
                     }
 
@@ -314,6 +422,7 @@ class CropOverlayView @JvmOverloads constructor(
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 touchMode = TouchMode.NONE
                 touchingCorner = null
+                panning = false
                 return true
             }
         }
@@ -332,7 +441,7 @@ class CropOverlayView @JvmOverloads constructor(
         val point = PointF(x, y)
         val margin = 24f * resources.displayMetrics.density
         return cropBoxes.any { box ->
-            val rect = imageRectToViewRect(box.rect)
+            val rect = imageRectToViewRect(visibleCropRect(box))
             val expanded = RectF(rect).apply { inset(-margin, -margin) }
             expanded.contains(x, y) || findTouchedCorner(point, rect) != Corner.NONE
         }
@@ -341,7 +450,7 @@ class CropOverlayView @JvmOverloads constructor(
     private fun findTouchedCropBox(point: PointF): CropBox? {
         // 从后往前查找（优先选择最上层的）
         return cropBoxes.asReversed().firstOrNull { cropBox ->
-            val viewRect = imageRectToViewRect(cropBox.rect)
+            val viewRect = imageRectToViewRect(visibleCropRect(cropBox))
             // 扩大触摸区域
             viewRect.inset(-20f, -20f)
             viewRect.contains(point.x, point.y)

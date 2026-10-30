@@ -35,6 +35,11 @@ class ImagePagerAdapter(
     ) : RecyclerView.ViewHolder(binding.root) {
 
         fun bind(uri: Uri, position: Int) {
+            binding.cropOverlayView.resetImage()
+            binding.imageView.resetPreviewTransform()
+            binding.cropOverlayView.onImageTransformChanged = { width, height, scale, x, y ->
+                binding.imageView.setPreviewTransform(width, height, scale, x, y)
+            }
             Glide.with(binding.imageView)
                 .load(uri)
                 .fitCenter()

@@ -37,6 +37,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.floor
 
 /**
  * 编辑器 Activity - 全屏图片编辑和裁剪
@@ -297,43 +299,49 @@ class EditorActivity : AppCompatActivity() {
             return
         }
 
+        val holder = (binding.viewPager.getChildAt(0) as? androidx.recyclerview.widget.RecyclerView)
+            ?.findViewHolderForAdapterPosition(currentPosition) as? ImagePagerAdapter.ImagePageViewHolder
+        val pageBinding = holder?.getBinding() ?: return
+        val visible = pageBinding.cropOverlayView.getVisibleImageRect()
+        // Use only pixels wholly inside the visible image, excluding the letterboxed screen area.
+        val left = ceil(visible.left).toInt().coerceIn(0, bitmap.width - 1)
+        val top = ceil(visible.top).toInt().coerceIn(0, bitmap.height - 1)
+        val right = floor(visible.right).toInt().coerceIn(left + 1, bitmap.width)
+        val bottom = floor(visible.bottom).toInt().coerceIn(top + 1, bitmap.height)
+
         lifecycleScope.launch {
             isProcessing = true
             showLoading(true, getString(R.string.detecting_pose))
-
+            var detectionBitmap: Bitmap? = null
             try {
-                // 检测人物
-                val persons = personDetector.detectPersons(bitmap)
-
-                // 生成裁剪框（传入黑边信息，确保裁剪框不包含黑边）
-                val expansionRatio = settingsManager.getExpansionRatio()
-                currentCropBoxes = if (persons.isNotEmpty()) {
-                    CropCalculator.generateCropBoxes(persons, bitmap.width, bitmap.height, currentLetterboxResult, expansionRatio)
+                val regionBitmap = withContext(Dispatchers.Default) {
+                    Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top)
+                }
+                detectionBitmap = regionBitmap
+                val persons = personDetector.detectPersons(regionBitmap)
+                val borders = withContext(Dispatchers.Default) {
+                    com.autocrop.album.domain.LetterboxDetector.detect(regionBitmap)
+                }
+                val localBoxes = if (persons.isNotEmpty()) {
+                    CropCalculator.generateCropBoxes(persons, regionBitmap.width, regionBitmap.height,
+                        borders, settingsManager.getExpansionRatio())
                 } else {
                     showStatus(getString(R.string.no_person_detected))
-                    emptyList()
+                    listOf(CropCalculator.createManualCropBox(0, regionBitmap.width, regionBitmap.height))
                 }
-
-                // 更新 UI
-                withContext(Dispatchers.Main) {
-                    val viewHolder = (binding.viewPager.getChildAt(0) as? androidx.recyclerview.widget.RecyclerView)
-                        ?.findViewHolderForAdapterPosition(currentPosition) as? ImagePagerAdapter.ImagePageViewHolder
-
-                    viewHolder?.getBinding()?.let { pageBinding ->
-                        updateOverlayView(pageBinding, currentLetterboxResult?.letterboxRegions ?: emptyList())
-
-                        if (persons.isEmpty()) {
-                            createManualCropBox()
-                        } else {
-                            showStatus(getString(R.string.multiple_persons_detected, persons.size))
-                        }
-                    }
+                // Detection coordinates are local to the snapshot; restore preview-image coordinates.
+                val snapshotRegion = ImageViewport.Region(left.toFloat(), top.toFloat(), right.toFloat(), bottom.toFloat())
+                currentCropBoxes = localBoxes.map { box ->
+                    val r = box.rect
+                    val mapped = snapshotRegion.fromLocal(ImageViewport.Region(r.left, r.top, r.right, r.bottom))
+                    box.copyWithRect(RectF(mapped.left, mapped.top, mapped.right, mapped.bottom))
                 }
-
+                updateOverlayView(pageBinding, currentLetterboxResult?.letterboxRegions ?: emptyList())
             } catch (e: Exception) {
                 e.printStackTrace()
                 showError("Error detecting persons: ${e.message}")
             } finally {
+                detectionBitmap?.takeIf { it !== bitmap }?.recycle()
                 isProcessing = false
                 showLoading(false)
             }
@@ -359,22 +367,8 @@ class EditorActivity : AppCompatActivity() {
 
             if (imageWidth == 0 || imageHeight == 0) return@post
 
-            val viewWidth = imageView.width.toFloat()
-            val viewHeight = imageView.height.toFloat()
-
-            val scale = minOf(
-                viewWidth / imageWidth,
-                viewHeight / imageHeight
-            )
-
-            val scaledWidth = imageWidth * scale
-            val scaledHeight = imageHeight * scale
-
-            val offsetX = (viewWidth - scaledWidth) / 2
-            val offsetY = (viewHeight - scaledHeight) / 2
-
-            // 设置变换信息
-            overlayView.setImageTransform(imageWidth, imageHeight, offsetX, offsetY, scale)
+            // Both views use preview-image coordinates; zoom never modifies crop geometry.
+            overlayView.setImageTransform(imageWidth, imageHeight)
 
             // 设置黑边区域（debug可视化）
             overlayView.setLetterboxRegions(letterboxRegions)
@@ -385,12 +379,17 @@ class EditorActivity : AppCompatActivity() {
     }
 
     private fun createManualCropBox() {
-        val bitmap = currentBitmap ?: return
+        if (currentBitmap == null) return
 
-        val newBox = CropCalculator.createManualCropBox(
-            currentCropBoxes.size,
-            bitmap.width,
-            bitmap.height
+        val currentHolder = (binding.viewPager.getChildAt(0) as? androidx.recyclerview.widget.RecyclerView)
+            ?.findViewHolderForAdapterPosition(currentPosition) as? ImagePagerAdapter.ImagePageViewHolder
+        val visible = currentHolder?.getBinding()?.cropOverlayView?.getVisibleImageRect() ?: return
+        if (isProcessing || visible.isEmpty) return
+        val newBox = CropBox(
+            id = currentCropBoxes.size,
+            rect = RectF(visible.left + visible.width() * 0.25f, visible.top + visible.height() * 0.25f,
+                visible.right - visible.width() * 0.25f, visible.bottom - visible.height() * 0.25f),
+            isSelected = true
         )
 
         currentCropBoxes = currentCropBoxes + newBox
@@ -515,6 +514,8 @@ class EditorActivity : AppCompatActivity() {
                 val holder = recyclerView.findViewHolderForAdapterPosition(currentPosition) as? ImagePagerAdapter.ImagePageViewHolder ?: return@launch
 
                 holder.getBinding()?.let { pageBinding ->
+                    pageBinding.cropOverlayView.resetImage()
+                    pageBinding.imageView.resetPreviewTransform()
                     // 重新加载图片到 ImageView
                     com.bumptech.glide.Glide.with(pageBinding.imageView)
                         .load(uri)
@@ -607,6 +608,9 @@ class EditorActivity : AppCompatActivity() {
     }
 
     private fun showLoading(show: Boolean, message: String? = null) {
+        val holder = (binding.viewPager.getChildAt(0) as? androidx.recyclerview.widget.RecyclerView)
+            ?.findViewHolderForAdapterPosition(currentPosition) as? ImagePagerAdapter.ImagePageViewHolder
+        holder?.getBinding()?.cropOverlayView?.interactionEnabled = !isProcessing
         updateNavigationButtons()
         binding.btnDetectPose.isEnabled = !isProcessing && currentBitmap != null && isPersonDetectorReady
         binding.progressBar.visibility = if (show) View.VISIBLE else View.GONE
@@ -651,7 +655,7 @@ class EditorActivity : AppCompatActivity() {
                         val x = ev.rawX - location[0]
                         val y = ev.rawY - location[1]
                         imageSwipeCandidate = x >= 0 && x < overlay.width &&
-                            y >= 0 && y < overlay.height && !overlay.isNearCropBox(x, y)
+                            y >= 0 && y < overlay.height && !overlay.isZoomed && !overlay.isNearCropBox(x, y)
                     }
                 }
                 imageSwipeStartX = ev.rawX
