@@ -37,7 +37,7 @@ class GalleryActivity : AppCompatActivity() {
     private lateinit var repository: MediaStoreRepository
     private lateinit var adapter: GalleryAdapter
 
-    private var currentSortOrder = ImageItem.Companion.SortOrder.NAME_DESC
+    private var currentSortOrder = ImageItem.Companion.SortOrder.DATE_MODIFIED_DESC
     private var imageList: List<ImageItem> = emptyList()
     private var currentFolder: String? = null
     private var availableFolders: List<String> = emptyList()
@@ -96,6 +96,8 @@ class GalleryActivity : AppCompatActivity() {
                         android.util.Log.e("GalleryActivity", "Error clearing cache", e)
                     }
 
+                    // A new edited copy may introduce the AutoCropAlbum output folder.
+                    availableFolders = repository.queryFolders()
                     loadImages(currentPage, preserveScroll = true)
                 }
             }
@@ -120,7 +122,9 @@ class GalleryActivity : AppCompatActivity() {
             currentFolder = savedInstanceState.getString("folder")
             restoredFolder = true
             currentSortOrder = ImageItem.Companion.SortOrder.values()
-                .getOrElse(savedInstanceState.getInt("sort")) { ImageItem.Companion.SortOrder.NAME_DESC }
+                .getOrElse(savedInstanceState.getInt("sort", ImageItem.Companion.SortOrder.DATE_MODIFIED_DESC.ordinal)) {
+                    ImageItem.Companion.SortOrder.DATE_MODIFIED_DESC
+                }
             restoredState = savedInstanceState.getParcelable("grid")
         }
         setupRecyclerView()

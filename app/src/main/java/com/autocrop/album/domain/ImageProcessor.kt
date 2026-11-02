@@ -43,7 +43,8 @@ class ImageProcessor(private val context: Context) {
     suspend fun loadBitmap(
         uri: Uri,
         maxDimension: Int = 2048,
-        autoRemoveLetterbox: Boolean = true
+        autoRemoveLetterbox: Boolean = true,
+        mutable: Boolean = false
     ): Bitmap? = withContext(Dispatchers.IO) {
         try {
             android.util.Log.d("ImageProcessor", "loadBitmap: uri=$uri, maxDimension=$maxDimension")
@@ -54,24 +55,18 @@ class ImageProcessor(private val context: Context) {
                 .load(uri)
                 .submit()
 
-            var bitmap = try {
-                futureTarget.get()
+            var workingBitmap = try {
+                val loaded = futureTarget.get()
+                // Copy while Glide still owns the resource; clear() may return it to the pool.
+                loaded?.copy(if (mutable) Bitmap.Config.ARGB_8888 else loaded.config ?: Bitmap.Config.ARGB_8888, mutable)
             } catch (e: Exception) {
                 android.util.Log.e("ImageProcessor", "loadBitmap: Glide failed to load", e)
                 null
             } finally {
                 Glide.with(context).clear(futureTarget)
-            }
+            } ?: return@withContext null
 
-            if (bitmap == null) {
-                android.util.Log.e("ImageProcessor", "loadBitmap: Failed to load bitmap")
-                return@withContext null
-            }
-
-            android.util.Log.d("ImageProcessor", "loadBitmap: original size=${bitmap.width}x${bitmap.height}")
-
-            // 创建一个副本，避免影响 Glide 的 bitmap 池
-            var workingBitmap = bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, false)
+            android.util.Log.d("ImageProcessor", "loadBitmap: original size=${workingBitmap.width}x${workingBitmap.height}")
 
             // 如果需要缩放
             if (maxOf(workingBitmap.width, workingBitmap.height) > maxDimension) {
@@ -127,21 +122,15 @@ class ImageProcessor(private val context: Context) {
                 .load(uri)
                 .submit()
 
-            var bitmap = try {
-                futureTarget.get()
+            var workingBitmap = try {
+                val loaded = futureTarget.get()
+                loaded.copy(loaded.config ?: Bitmap.Config.ARGB_8888, false)
             } catch (e: Exception) {
                 android.util.Log.e("ImageProcessor", "loadBitmapWithLetterboxInfo: Glide failed", e)
                 null
             } finally {
                 Glide.with(context).clear(futureTarget)
-            }
-
-            if (bitmap == null) {
-                return@withContext null
-            }
-
-            // 创建副本
-            var workingBitmap = bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, false)
+            } ?: return@withContext null
 
             // 缩放（如果需要）
             if (maxOf(workingBitmap.width, workingBitmap.height) > maxDimension) {
@@ -165,6 +154,57 @@ class ImageProcessor(private val context: Context) {
             e.printStackTrace()
             null
         }
+    }
+
+    /** Mutates only the owned output bitmap; unselected pixels are copied back unchanged. */
+    fun applyMosaic(bitmap: Bitmap, mask: ByteArray, maskWidth: Int, maskHeight: Int, block: Int) {
+        require(bitmap.isMutable && block > 0 && mask.size == maskWidth * maskHeight)
+        val buffer = IntArray(minOf(block, bitmap.width) * minOf(block, bitmap.height))
+        for (y in 0 until bitmap.height step block) for (x in 0 until bitmap.width step block) {
+            val w = minOf(block, bitmap.width - x); val h = minOf(block, bitmap.height - y)
+            bitmap.getPixels(buffer, 0, w, x, y, w, h)
+            MaskMosaic.renderTile(buffer, w, h, x, y, bitmap.width, bitmap.height, mask, maskWidth, maskHeight)
+            // getPixels/setPixels convert through sRGB. Never rewrite unselected pixels:
+            // a round trip can clip wide-gamut (e.g. Display P3) colors outside the mask.
+            for (row in 0 until h) {
+                var column = 0
+                while (column < w) {
+                    while (column < w && !MaskMosaic.selected(mask, maskWidth, maskHeight,
+                            x + column, y + row, bitmap.width, bitmap.height)) column++
+                    val start = column
+                    while (column < w && MaskMosaic.selected(mask, maskWidth, maskHeight,
+                            x + column, y + row, bitmap.width, bitmap.height)) column++
+                    if (column > start) bitmap.setPixels(buffer, row * w + start, w,
+                        x + start, y + row, column - start, 1)
+                }
+            }
+        }
+    }
+
+    /** Keep the actual source encoding when replacing it; never put PNG bytes in a JPEG file. */
+    suspend fun mosaicOverwriteFormat(source: Uri): Bitmap.CompressFormat? = withContext(Dispatchers.IO) {
+        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        context.contentResolver.openInputStream(source)?.use { BitmapFactory.decodeStream(it, null, options) }
+        when (options.outMimeType) {
+            "image/jpeg" -> Bitmap.CompressFormat.JPEG
+            "image/png" -> Bitmap.CompressFormat.PNG
+            "image/webp" -> if (android.os.Build.VERSION.SDK_INT >= 30) Bitmap.CompressFormat.WEBP_LOSSLESS
+                else @Suppress("DEPRECATION") Bitmap.CompressFormat.WEBP
+            else -> null
+        }
+    }
+
+    suspend fun saveMosaic(source: Uri, mask: ByteArray, maskWidth: Int, maskHeight: Int,
+                          previewBlock: Int, target: File,
+                          format: Bitmap.CompressFormat = Bitmap.CompressFormat.PNG): Boolean = withContext(Dispatchers.IO) {
+        val bitmap = loadBitmap(source, Int.MAX_VALUE, autoRemoveLetterbox = false, mutable = true)
+            ?: return@withContext false
+        try {
+            val block = (previewBlock * maxOf(bitmap.width.toFloat() / maskWidth, bitmap.height.toFloat() / maskHeight))
+                .toInt().coerceAtLeast(1)
+            applyMosaic(bitmap, mask, maskWidth, maskHeight, block)
+            target.outputStream().use { bitmap.compress(format, 100, it) }
+        } finally { bitmap.recycle() }
     }
 
     /**

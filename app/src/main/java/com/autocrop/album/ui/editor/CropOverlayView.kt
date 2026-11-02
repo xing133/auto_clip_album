@@ -50,6 +50,9 @@ class CropOverlayView @JvmOverloads constructor(
     private var imageScale: Float = 1f
 
     private val viewport = ImageViewport()
+    var externalMaskEditing = false
+        set(value) { field = value; touchMode = TouchMode.NONE; invalidate() }
+    fun panImageBy(dx: Float, dy: Float) { viewport.pan(dx, dy); applyViewport() }
     var onImageTransformChanged: ((Int, Int, Float, Float, Float) -> Unit)? = null
     val isZoomed: Boolean get() = viewport.zoom > 1.001f
     private var multiTouchGesture = false
@@ -271,6 +274,7 @@ class CropOverlayView @JvmOverloads constructor(
 
     fun resetImage() {
         clearSegmentation()
+        externalMaskEditing = false
         imageWidth = 0
         imageHeight = 0
         cropBoxes.clear()
@@ -301,7 +305,7 @@ class CropOverlayView @JvmOverloads constructor(
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
 
-        if (imageWidth == 0 || imageHeight == 0) return
+        if (imageWidth == 0 || imageHeight == 0 || externalMaskEditing) return
         if (isShowingSegmentation) {
             drawSegmentation(canvas)
             return
@@ -436,6 +440,7 @@ class CropOverlayView @JvmOverloads constructor(
             return true
         }
         val touchPoint = PointF(event.x, event.y)
+        if (externalMaskEditing) return true
         if (isShowingSegmentation) return handleSegmentationTouch(event, touchPoint)
 
         when (event.action) {

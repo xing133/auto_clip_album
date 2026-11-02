@@ -32,6 +32,9 @@ import com.autocrop.album.domain.CropCalculator
 import com.autocrop.album.domain.ImageProcessor
 import com.autocrop.album.domain.ImageSegmentation
 import com.autocrop.album.domain.SegmentationModel
+import com.autocrop.album.domain.EditableMask
+import com.autocrop.album.domain.InteractivePersonSelector
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.widget.PopupMenu
 import androidx.appcompat.widget.TooltipCompat
 import kotlinx.coroutines.CancellationException
@@ -68,6 +71,10 @@ class EditorActivity : AppCompatActivity() {
 
     private lateinit var gestureDetector: GestureDetectorCompat
     private var segmentationModel = SegmentationModel.MULTICLASS
+    private var bystanderMask: EditableMask? = null
+    private var maskBrushRadiusDp = 12f
+    private var mosaicBlockSize = SettingsManager.DEFAULT_MOSAIC_BLOCK_SIZE
+    private val isBystanderEditing: Boolean get() = bystanderMask != null
     private var segmentationTouch = false
     private var imageSwipeCandidate = false
     private var imageSwipeStartX = 0f
@@ -91,6 +98,7 @@ class EditorActivity : AppCompatActivity() {
         repository = MediaStoreRepository(this)
         settingsManager = SettingsManager.getInstance(this)
         segmentationModel = settingsManager.getSegmentationModel()
+        mosaicBlockSize = settingsManager.getMosaicBlockSize()
         registerEditPermissionLauncher()
         registerDeletePermissionLauncher()
 
@@ -106,6 +114,13 @@ class EditorActivity : AppCompatActivity() {
         setupViewPager()
         setupButtons()
         setupGestureDetector()
+        setupBystanderControls()
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (isBystanderEditing) { if (!isProcessing) leaveBystander() }
+                else { isEnabled = false; onBackPressedDispatcher.onBackPressed(); isEnabled = true }
+            }
+        })
 
         // 初始化 PersonDetector（后台静默进行，不阻塞）
         binding.btnDetectPose.isEnabled = false
@@ -132,6 +147,7 @@ class EditorActivity : AppCompatActivity() {
 
         binding.viewPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
             override fun onPageSelected(position: Int) {
+                if (isBystanderEditing) leaveBystander(restoreImage = false)
                 currentPageBinding()?.cropOverlayView?.clearSegmentation()
                 currentPosition = position
                 currentCropBoxes = emptyList()
@@ -194,7 +210,7 @@ class EditorActivity : AppCompatActivity() {
         binding.btnSegmentModel.contentDescription = modelDescription
         TooltipCompat.setTooltipText(binding.btnSegmentModel, modelDescription)
         binding.segmentationHint.visibility = if (showing) View.VISIBLE else View.GONE
-        binding.btnCrop.isEnabled = !isProcessing && !showing
+        binding.btnCrop.isEnabled = !isProcessing && !showing && !isBystanderEditing
     }
 
     private fun showSegmentationModels() {
@@ -267,6 +283,255 @@ class EditorActivity : AppCompatActivity() {
         }
     }
 
+    private fun setupBystanderControls() {
+        binding.btnBystander.setOnClickListener { enterBystander() }
+        TooltipCompat.setTooltipText(binding.btnBystander, getString(R.string.bystander_title))
+        binding.btnMaskTool.setOnClickListener { showMaskTools() }
+        binding.btnMaskSettings.setOnClickListener { showMaskSettings() }
+        for (button in listOf(binding.btnMaskTool, binding.btnMaskUndo, binding.btnMaskSettings,
+            binding.btnMaskPreview, binding.btnMaskOverwrite, binding.btnMaskSave, binding.btnMaskCancel)) {
+            TooltipCompat.setTooltipText(button, button.contentDescription)
+        }
+        binding.btnMaskUndo.setOnClickListener {
+            if (!isProcessing && bystanderMask?.undo() == true) {
+                val view = currentPageBinding()?.maskEditView
+                view?.refresh()
+                if (view?.preview == true) renderBystanderPreview() else updateBystanderControls()
+            }
+        }
+        binding.btnMaskCancel.setOnClickListener { if (!isProcessing) leaveBystander() }
+        binding.btnMaskPreview.setOnClickListener {
+            val page = currentPageBinding() ?: return@setOnClickListener
+            if (page.maskEditView.preview) {
+                page.maskEditView.preview = false
+                page.imageView.setImageBitmap(currentBitmap)
+                updateBystanderControls()
+            } else renderBystanderPreview()
+        }
+        binding.btnMaskOverwrite.setOnClickListener { saveBystander(overwriteOriginal = true) }
+        binding.btnMaskSave.setOnClickListener { saveBystander(overwriteOriginal = false) }
+    }
+
+    private fun showMaskTools() {
+        if (isProcessing) return
+        val view = currentPageBinding()?.maskEditView ?: return
+        val tools = MaskEditView.Tool.values()
+        val labels = intArrayOf(R.string.mask_select, R.string.mask_add, R.string.mask_erase)
+        PopupMenu(this, binding.btnMaskTool).apply {
+            tools.forEachIndexed { index, tool -> menu.add(0, index + 1, index, labels[index]).apply {
+                isCheckable = true; isChecked = view.tool == tool
+            } }
+            menu.setGroupCheckable(0, true, true)
+            setOnMenuItemClickListener { item -> view.tool = tools[item.itemId - 1]; updateBystanderControls(); true }
+            show()
+        }
+    }
+
+    private fun showMaskSettings() {
+        if (isProcessing || !isBystanderEditing) return
+        val body = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            val padding = (24 * resources.displayMetrics.density).toInt()
+            setPadding(padding, padding / 2, padding, 0)
+        }
+        fun slider(label: Int, from: Float, to: Float, step: Float, value: Float, change: (Float) -> Unit) {
+            val title = android.widget.TextView(this).apply { text = getString(label) }
+            val control = com.google.android.material.slider.Slider(this).apply {
+                valueFrom = from; valueTo = to; stepSize = step; this.value = value
+                contentDescription = getString(label)
+                addOnChangeListener { _, changed, _ -> change(changed) }
+            }
+            body.addView(title); body.addView(control)
+        }
+        slider(R.string.mask_brush_size, 4f, 40f, 2f, maskBrushRadiusDp) {
+            maskBrushRadiusDp = it; currentPageBinding()?.maskEditView?.brushRadiusDp = it
+        }
+        slider(R.string.mask_strength, SettingsManager.MIN_MOSAIC_BLOCK_SIZE.toFloat(),
+            SettingsManager.MAX_MOSAIC_BLOCK_SIZE.toFloat(), SettingsManager.MOSAIC_BLOCK_SIZE_STEP.toFloat(),
+            mosaicBlockSize.toFloat()) {
+            mosaicBlockSize = it.toInt()
+            settingsManager.setMosaicBlockSize(mosaicBlockSize)
+        }
+        val before = mosaicBlockSize
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.mask_settings).setView(body).setPositiveButton(R.string.ok, null)
+            .setOnDismissListener {
+                if (mosaicBlockSize != before && currentPageBinding()?.maskEditView?.preview == true) renderBystanderPreview()
+            }.show()
+    }
+
+    private fun enterBystander() {
+        if (isProcessing || isBystanderEditing || binding.viewPager.scrollState != ViewPager2.SCROLL_STATE_IDLE) return
+        val bitmap = currentBitmap ?: return
+        val page = currentPageBinding() ?: return
+        page.cropOverlayView.clearSegmentation()
+        bystanderMask = EditableMask(bitmap.width, bitmap.height)
+        com.bumptech.glide.Glide.with(page.imageView).clear(page.imageView)
+        page.imageView.setImageBitmap(bitmap)
+        page.cropOverlayView.externalMaskEditing = true
+        page.maskEditView.apply {
+            mask = bystanderMask
+            preview = false
+            tool = MaskEditView.Tool.SELECT
+            brushRadiusDp = maskBrushRadiusDp
+            onSelect = { x, y -> selectBystander(x, y) }
+            onMaskChanged = { updateBystanderControls() }
+            visibility = View.VISIBLE
+        }
+        binding.bystanderPanel.visibility = View.VISIBLE
+        binding.bystanderHint.visibility = View.VISIBLE
+        binding.segmentationControls.visibility = View.GONE
+        binding.segmentationHint.visibility = View.GONE
+        binding.editorActions.visibility = View.GONE
+        binding.btnExpandOptions.visibility = View.GONE
+        binding.saveOptionsPanel.visibility = View.GONE
+        updateNavigationButtons()
+        updateBystanderControls()
+    }
+
+    private fun leaveBystander(restoreImage: Boolean = true) {
+        val page = currentPageBinding()
+        bystanderMask = null
+        page?.maskEditView?.apply { mask = null; preview = false; visibility = View.GONE; onSelect = null; onMaskChanged = null }
+        page?.cropOverlayView?.externalMaskEditing = false
+        binding.bystanderPanel.visibility = View.GONE
+        binding.bystanderHint.visibility = View.GONE
+        binding.segmentationControls.visibility = View.VISIBLE
+        binding.editorActions.visibility = View.VISIBLE
+        binding.btnExpandOptions.visibility = View.VISIBLE
+        if (restoreImage && page != null) {
+            com.bumptech.glide.Glide.with(page.imageView).load(imageUris[currentPosition]).fitCenter().into(page.imageView)
+        }
+        updateNavigationButtons()
+        updateSegmentationUi(false)
+    }
+
+    private fun updateBystanderControls() {
+        val mask = bystanderMask
+        val available = !isProcessing && mask != null
+        val preview = currentPageBinding()?.maskEditView?.preview == true
+        binding.btnMaskTool.isEnabled = available && !preview
+        binding.btnMaskSettings.isEnabled = available
+        binding.btnMaskUndo.isEnabled = available && mask?.canUndo == true
+        binding.btnMaskPreview.isEnabled = available && mask?.hasSelection == true
+        binding.btnMaskOverwrite.isEnabled = available && mask?.hasSelection == true
+        binding.btnMaskSave.isEnabled = available && mask?.hasSelection == true
+        binding.btnMaskCancel.isEnabled = !isProcessing
+        val tool = currentPageBinding()?.maskEditView?.tool ?: MaskEditView.Tool.SELECT
+        val label = when (tool) {
+            MaskEditView.Tool.SELECT -> R.string.mask_select
+            MaskEditView.Tool.ADD -> R.string.mask_add
+            MaskEditView.Tool.ERASE -> R.string.mask_erase
+        }
+        binding.btnMaskTool.setIconResource(when (tool) {
+            MaskEditView.Tool.SELECT -> R.drawable.ic_segment
+            MaskEditView.Tool.ADD -> android.R.drawable.ic_menu_edit
+            MaskEditView.Tool.ERASE -> R.drawable.ic_eraser
+        })
+        binding.btnMaskTool.contentDescription = getString(R.string.mask_tool_current, getString(label))
+        TooltipCompat.setTooltipText(binding.btnMaskTool, binding.btnMaskTool.contentDescription)
+        binding.bystanderHint.setText(if (preview) R.string.mask_preview_hint else when (tool) {
+            MaskEditView.Tool.SELECT -> R.string.mask_select_hint
+            MaskEditView.Tool.ADD -> R.string.mask_add_hint
+            MaskEditView.Tool.ERASE -> R.string.mask_erase_hint
+        })
+        binding.btnMaskPreview.contentDescription = getString(if (preview) R.string.mask_edit else R.string.mask_preview)
+        TooltipCompat.setTooltipText(binding.btnMaskPreview, binding.btnMaskPreview.contentDescription)
+        binding.btnMaskPreview.iconTint = android.content.res.ColorStateList.valueOf(if (preview) 0xff63e6be.toInt() else android.graphics.Color.WHITE)
+
+    }
+
+    private fun selectBystander(x: Float, y: Float) {
+        if (isProcessing) return
+        val mask = bystanderMask ?: return
+        val source = currentBitmap ?: return
+        val snapshot = source.copy(Bitmap.Config.ARGB_8888, false)
+        lifecycleScope.launch {
+            isProcessing = true; showLoading(true, getString(R.string.mask_selecting))
+            try {
+                val selection = withContext(Dispatchers.Default) { InteractivePersonSelector(this@EditorActivity).select(snapshot, x, y) }
+                if (selection.none { it.toInt() != 0 }) showError(getString(R.string.mask_no_selection))
+                else {
+                    mask.addSelection(selection)
+                    currentPageBinding()?.maskEditView?.refresh()
+                }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { showError(getString(R.string.mask_failed, e.message ?: e.javaClass.simpleName)) }
+            finally { snapshot.recycle(); isProcessing = false; showLoading(false) }
+        }
+    }
+
+    private fun renderBystanderPreview() {
+        if (isProcessing) return
+        val mask = bystanderMask ?: return
+        val page = currentPageBinding() ?: return
+        val source = currentBitmap ?: return
+        val snapshot = source.copy(Bitmap.Config.ARGB_8888, true)
+        val pixels = mask.copyPixels()
+        val block = mosaicBlockSize
+        lifecycleScope.launch {
+            isProcessing = true; showLoading(true)
+            try {
+                withContext(Dispatchers.Default) { imageProcessor.applyMosaic(snapshot, pixels, mask.width, mask.height, block) }
+                page.imageView.setImageBitmap(snapshot)
+                page.maskEditView.preview = true
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { showError(getString(R.string.mask_failed, e.message ?: e.javaClass.simpleName)) }
+            finally { isProcessing = false; showLoading(false) }
+        }
+    }
+
+    private fun saveBystander(overwriteOriginal: Boolean) {
+        if (isProcessing) return
+        val mask = bystanderMask ?: return
+        if (!mask.hasSelection) return
+        val pixels = mask.copyPixels()
+        val uri = imageUris[currentPosition]
+        val block = mosaicBlockSize
+        val suffix = if (overwriteOriginal) "tmp" else "png"
+        val temp = imageProcessor.getTempFile("mosaic_${System.currentTimeMillis()}.$suffix")
+        lifecycleScope.launch {
+            isProcessing = true; showLoading(true, getString(R.string.mask_saving))
+            try {
+                val format = if (overwriteOriginal) imageProcessor.mosaicOverwriteFormat(uri) else Bitmap.CompressFormat.PNG
+                if (format == null) {
+                    showError(getString(R.string.mask_format_unsupported))
+                    return@launch
+                }
+                check(imageProcessor.saveMosaic(uri, pixels, mask.width, mask.height, block, temp, format)) { "Cannot encode image" }
+                persistBystanderSave(PendingSaveRequest(uri, temp, overwriteOriginal, isMosaic = true))
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                pendingSaveRequest = null
+                showError(getString(R.string.mask_failed, e.message ?: e.javaClass.simpleName))
+            } finally {
+                if (pendingSaveRequest?.tempFile != temp) temp.delete()
+                isProcessing = pendingSaveRequest?.isMosaic == true
+                showLoading(false)
+            }
+        }
+    }
+
+    private suspend fun persistBystanderSave(pending: PendingSaveRequest, allowPermissionRequest: Boolean = true) {
+        val result = if (pending.overwriteOriginal) {
+            repository.saveCroppedImage(pending.sourceUri, pending.tempFile, overwriteOriginal = true)
+        } else repository.saveNewPng(pending.tempFile)
+        when (result) {
+            is SaveImageResult.Success -> {
+                pendingSaveRequest = null
+                android.util.Log.d("BystanderEditor", "Saved mosaic: ${result.uri} overwrite=${pending.overwriteOriginal}")
+                leaveBystander(restoreImage = !pending.overwriteOriginal)
+                handleSaveSuccess(pending.overwriteOriginal)
+            }
+            is SaveImageResult.RequiresPermission -> {
+                check(allowPermissionRequest) { "Write permission was not granted" }
+                pendingSaveRequest = pending
+                requestWritePermission(result.intentSender)
+            }
+            is SaveImageResult.Error -> throw result.throwable ?: IllegalStateException("Cannot save image")
+        }
+    }
+
     private fun loadCurrentImageWhenReady() {
         binding.viewPager.post {
             if (isProcessing || currentBitmap != null ||
@@ -301,13 +566,13 @@ class EditorActivity : AppCompatActivity() {
 
         // 导航按钮
         binding.btnPrevImage.setOnClickListener {
-            if (!isProcessing && binding.viewPager.scrollState == ViewPager2.SCROLL_STATE_IDLE && currentPosition > 0) {
+            if (!isProcessing && !isBystanderEditing && binding.viewPager.scrollState == ViewPager2.SCROLL_STATE_IDLE && currentPosition > 0) {
                 binding.viewPager.setCurrentItem(currentPosition - 1, true)
             }
         }
 
         binding.btnNextImage.setOnClickListener {
-            if (!isProcessing && binding.viewPager.scrollState == ViewPager2.SCROLL_STATE_IDLE && currentPosition < imageUris.size - 1) {
+            if (!isProcessing && !isBystanderEditing && binding.viewPager.scrollState == ViewPager2.SCROLL_STATE_IDLE && currentPosition < imageUris.size - 1) {
                 binding.viewPager.setCurrentItem(currentPosition + 1, true)
             }
         }
@@ -325,14 +590,14 @@ class EditorActivity : AppCompatActivity() {
     }
 
     private fun updateNavigationButtons() {
-        val canNavigate = !isProcessing && binding.viewPager.scrollState == ViewPager2.SCROLL_STATE_IDLE
+        val canNavigate = !isProcessing && !isBystanderEditing && binding.viewPager.scrollState == ViewPager2.SCROLL_STATE_IDLE
         binding.btnPrevImage.isEnabled = canNavigate
         binding.btnNextImage.isEnabled = canNavigate
         // 第一张图片时隐藏"上一张"按钮
-        binding.btnPrevImage.visibility = if (currentPosition > 0) View.VISIBLE else View.GONE
+        binding.btnPrevImage.visibility = if (!isBystanderEditing && currentPosition > 0) View.VISIBLE else View.GONE
 
         // 最后一张图片时隐藏"下一张"按钮
-        binding.btnNextImage.visibility = if (currentPosition < imageUris.size - 1) View.VISIBLE else View.GONE
+        binding.btnNextImage.visibility = if (!isBystanderEditing && currentPosition < imageUris.size - 1) View.VISIBLE else View.GONE
     }
 
     private fun setupGestureDetector() {
@@ -496,7 +761,7 @@ class EditorActivity : AppCompatActivity() {
     }
 
     private fun createManualCropBox() {
-        if (currentBitmap == null || currentPageBinding()?.cropOverlayView?.isShowingSegmentation == true) return
+        if (currentBitmap == null || isBystanderEditing || currentPageBinding()?.cropOverlayView?.isShowingSegmentation == true) return
 
         val currentHolder = (binding.viewPager.getChildAt(0) as? androidx.recyclerview.widget.RecyclerView)
             ?.findViewHolderForAdapterPosition(currentPosition) as? ImagePagerAdapter.ImagePageViewHolder
@@ -658,8 +923,10 @@ class EditorActivity : AppCompatActivity() {
             if (result.resultCode == Activity.RESULT_OK) {
                 retryPendingSave()
             } else {
+                val mosaic = pendingSaveRequest?.isMosaic == true
+                if (mosaic) pendingSaveRequest?.tempFile?.delete()
                 pendingSaveRequest = null
-                showError(getString(R.string.crop_failed))
+                if (!mosaic) showError(getString(R.string.crop_failed))
                 isProcessing = false
                 showLoading(false)
             }
@@ -693,6 +960,10 @@ class EditorActivity : AppCompatActivity() {
             isProcessing = true
             showLoading(true, getString(R.string.saving_image))
             try {
+                if (pending.isMosaic) {
+                    persistBystanderSave(pending, allowPermissionRequest = false)
+                    return@launch
+                }
                 when (val result = repository.saveCroppedImage(pending.sourceUri, pending.tempFile, pending.overwriteOriginal)) {
                     is SaveImageResult.Success -> {
                         pendingSaveRequest = null
@@ -707,7 +978,13 @@ class EditorActivity : AppCompatActivity() {
                         showError(getString(R.string.crop_failed))
                     }
                 }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                pendingSaveRequest = null
+                showError(if (pending.isMosaic) getString(R.string.mask_failed, e.message ?: e.javaClass.simpleName)
+                    else getString(R.string.crop_failed))
             } finally {
+                if (pending.isMosaic && pendingSaveRequest?.tempFile != pending.tempFile) pending.tempFile.delete()
                 isProcessing = false
                 showLoading(false)
             }
@@ -732,6 +1009,9 @@ class EditorActivity : AppCompatActivity() {
         binding.btnDetectPose.isEnabled = !isProcessing && currentBitmap != null && isPersonDetectorReady
         binding.btnSegment.isEnabled = !isProcessing && currentBitmap != null
         binding.btnSegmentModel.isEnabled = !isProcessing && currentBitmap != null
+        binding.btnBystander.isEnabled = !isProcessing && currentBitmap != null
+        currentPageBinding()?.maskEditView?.isEnabled = !isProcessing
+        updateBystanderControls()
         updateSegmentationUi(holder?.getBinding()?.cropOverlayView?.isShowingSegmentation == true)
         binding.progressBar.visibility = if (show) View.VISIBLE else View.GONE
         if (show && message != null) {
@@ -757,6 +1037,7 @@ class EditorActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        pendingSaveRequest?.takeIf { it.isMosaic }?.tempFile?.delete()
         personDetector.close()
         currentBitmap?.recycle()
     }
@@ -764,9 +1045,9 @@ class EditorActivity : AppCompatActivity() {
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                segmentationTouch = currentPageBinding()?.cropOverlayView?.isShowingSegmentation == true
+                segmentationTouch = isBystanderEditing || currentPageBinding()?.cropOverlayView?.isShowingSegmentation == true
                 imageSwipeCandidate = false
-                if (!isProcessing && currentBitmap != null &&
+                if (!isProcessing && !isBystanderEditing && currentBitmap != null &&
                     binding.viewPager.scrollState == ViewPager2.SCROLL_STATE_IDLE) {
                     val holder = (binding.viewPager.getChildAt(0) as? androidx.recyclerview.widget.RecyclerView)
                         ?.findViewHolderForAdapterPosition(currentPosition) as? ImagePagerAdapter.ImagePageViewHolder
@@ -936,7 +1217,8 @@ class EditorActivity : AppCompatActivity() {
     private data class PendingSaveRequest(
         val sourceUri: Uri,
         val tempFile: File,
-        val overwriteOriginal: Boolean
+        val overwriteOriginal: Boolean,
+        val isMosaic: Boolean = false
     )
 
     override fun finish() {

@@ -8,6 +8,8 @@ import android.content.IntentSender
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import kotlinx.coroutines.CancellationException
 import android.database.Cursor
 import com.autocrop.album.data.models.PageWindow
 import kotlinx.coroutines.currentCoroutineContext
@@ -275,14 +277,12 @@ class MediaStoreRepository(private val context: Context) {
             android.util.Log.d("MediaStoreRepository", "overwriteImageUri: targetUri=$targetUri, tempFile=${tempFile.absolutePath}")
             android.util.Log.d("MediaStoreRepository", "overwriteImageUri: temp file exists=${tempFile.exists()}, size=${tempFile.length()}")
 
-            val outputStream = contentResolver.openOutputStream(targetUri, "wt")
-            if (outputStream == null) {
-                android.util.Log.e("MediaStoreRepository", "overwriteImageUri: failed to open output stream")
-                return OverwriteOutcome.Failure
-            }
-
-            outputStream.use { out ->
-                tempFile.inputStream().use { inputStream ->
+            check(tempFile.isFile && tempFile.length() > 0) { "Empty replacement file" }
+            // Open the completed replacement first, before truncating the original.
+            tempFile.inputStream().use { inputStream ->
+                val outputStream = contentResolver.openOutputStream(targetUri, "wt")
+                    ?: return OverwriteOutcome.Failure
+                outputStream.use { out ->
                     val bytesCopied = inputStream.copyTo(out)
                     android.util.Log.d("MediaStoreRepository", "overwriteImageUri: copied $bytesCopied bytes")
                 }
@@ -292,6 +292,12 @@ class MediaStoreRepository(private val context: Context) {
         } catch (e: RecoverableSecurityException) {
             android.util.Log.d("MediaStoreRepository", "overwriteImageUri: RecoverableSecurityException, requires permission")
             OverwriteOutcome.RequiresPermission(e.userAction.actionIntent.intentSender)
+        } catch (e: SecurityException) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                try {
+                    OverwriteOutcome.RequiresPermission(MediaStore.createWriteRequest(contentResolver, listOf(targetUri)).intentSender)
+                } catch (_: Exception) { OverwriteOutcome.Failure }
+            } else OverwriteOutcome.Failure
         } catch (e: Exception) {
             android.util.Log.e("MediaStoreRepository", "overwriteImageUri: exception", e)
             e.printStackTrace()
@@ -311,6 +317,48 @@ class MediaStoreRepository(private val context: Context) {
             }
         } catch (e: Exception) {
             e.printStackTrace()
+        }
+    }
+
+    /** Always creates a new PNG. Pending rows and owned partial files are removed on failure. */
+    suspend fun saveNewPng(file: File): SaveImageResult = withContext(Dispatchers.IO) {
+        var inserted: Uri? = null
+        var legacyCopy: File? = null
+        try {
+            check(file.isFile && file.length() > 0) { "Empty image file" }
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, file.name)
+                put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+                put(MediaStore.Images.Media.DATE_ADDED, System.currentTimeMillis() / 1000)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/AutoCropAlbum")
+                    put(MediaStore.Images.Media.IS_PENDING, 1)
+                } else {
+                    val folder = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "AutoCropAlbum")
+                    check(folder.isDirectory || folder.mkdirs()) { "Cannot create output folder" }
+                    val copy = File(folder, file.name)
+                    check(copy.createNewFile()) { "Output file already exists" }
+                    legacyCopy = copy
+                    file.inputStream().use { input -> copy.outputStream().use { input.copyTo(it) } }
+                    put(MediaStore.Images.Media.DATA, copy.absolutePath)
+                }
+            }
+            val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                ?: error("Cannot create image record")
+            inserted = uri
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val stream = contentResolver.openOutputStream(uri) ?: error("Cannot open image output")
+                stream.use { output -> file.inputStream().use { it.copyTo(output) } }
+                check(contentResolver.update(uri, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null) > 0)
+            }
+            inserted = null
+            legacyCopy = null
+            SaveImageResult.Success(uri)
+        } catch (e: CancellationException) { throw e }
+        catch (e: Exception) { SaveImageResult.Error(e) }
+        finally {
+            inserted?.let { try { contentResolver.delete(it, null, null) } catch (_: Exception) {} }
+            legacyCopy?.delete()
         }
     }
 

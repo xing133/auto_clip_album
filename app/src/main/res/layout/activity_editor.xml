@@ -156,6 +156,10 @@
             android:contentDescription="@string/segmentation_model_select"
             app:icon="@drawable/ic_expand_more" app:iconSize="18dp" app:iconTint="@color/white"
             app:backgroundTint="@color/overlay_background" />
+        <com.google.android.material.button.MaterialButton android:id="@+id/btnBystander"
+            style="?attr/materialIconButtonStyle" android:layout_width="48dp" android:layout_height="48dp"
+            android:contentDescription="@string/bystander_title" app:icon="@drawable/ic_bystander"
+            app:iconSize="22dp" app:iconTint="@color/white" app:backgroundTint="@color/overlay_background" />
     </LinearLayout>
 
     <TextView android:id="@+id/segmentationHint"
@@ -166,14 +170,54 @@
         app:layout_constraintStart_toStartOf="parent" app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintBottom_toTopOf="@id/segmentationControls" />
 
+    <TextView android:id="@+id/bystanderHint" android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:maxLines="1" android:ellipsize="end" app:layout_constrainedWidth="true"
+        android:paddingHorizontal="10dp" android:paddingVertical="4dp" android:layout_marginBottom="6dp"
+        android:text="@string/mask_select_hint" android:textColor="@color/white" android:textSize="12sp"
+        android:background="@color/overlay_background" android:visibility="gone"
+        app:layout_constraintStart_toStartOf="parent" app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/bystanderPanel" />
+    <LinearLayout android:id="@+id/bystanderPanel" android:layout_width="0dp" android:layout_height="wrap_content"
+        android:layout_margin="12dp" android:padding="4dp" android:orientation="horizontal"
+        android:background="@drawable/bg_mask_toolbar" android:visibility="gone"
+        app:layout_constraintWidth_max="352dp"
+        app:layout_constraintStart_toStartOf="parent" app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent">
+        <com.google.android.material.button.MaterialButton android:id="@+id/btnMaskTool"
+            style="?attr/materialIconButtonStyle" android:layout_width="0dp" android:layout_weight="1" android:layout_height="48dp"
+            android:contentDescription="@string/mask_tool" app:icon="@drawable/ic_segment" app:iconSize="22dp"
+            app:iconTint="@color/white" app:backgroundTint="@android:color/transparent" />
+        <com.google.android.material.button.MaterialButton android:id="@+id/btnMaskUndo"
+            style="?attr/materialIconButtonStyle" android:layout_width="0dp" android:layout_weight="1" android:layout_height="48dp"
+            android:contentDescription="@string/mask_undo" app:icon="@drawable/ic_undo" app:iconSize="22dp"
+            app:iconTint="@color/white" app:backgroundTint="@android:color/transparent" />
+        <com.google.android.material.button.MaterialButton android:id="@+id/btnMaskSettings"
+            style="?attr/materialIconButtonStyle" android:layout_width="0dp" android:layout_weight="1" android:layout_height="48dp"
+            android:contentDescription="@string/mask_settings" app:icon="@drawable/ic_tune" app:iconSize="22dp"
+            app:iconTint="@color/white" app:backgroundTint="@android:color/transparent" />
+        <com.google.android.material.button.MaterialButton android:id="@+id/btnMaskPreview"
+            style="?attr/materialIconButtonStyle" android:layout_width="0dp" android:layout_weight="1" android:layout_height="48dp"
+            android:contentDescription="@string/mask_preview" app:icon="@drawable/ic_visibility" app:iconSize="22dp"
+            app:iconTint="@color/white" app:backgroundTint="@android:color/transparent" />
+        <com.google.android.material.button.MaterialButton android:id="@+id/btnMaskOverwrite"
+            style="?attr/materialIconButtonStyle" android:layout_width="0dp" android:layout_weight="1" android:layout_height="48dp"
+            android:contentDescription="@string/mask_overwrite" app:icon="@drawable/ic_save_overwrite" app:iconSize="22dp"
+            app:iconTint="@color/white" app:backgroundTint="@android:color/transparent" />
+        <com.google.android.material.button.MaterialButton android:id="@+id/btnMaskSave"
+            style="?attr/materialIconButtonStyle" android:layout_width="0dp" android:layout_weight="1" android:layout_height="48dp"
+            android:contentDescription="@string/mask_save_copy" app:icon="@drawable/ic_save_copy" app:iconSize="22dp"
+            app:iconTint="@color/white" app:backgroundTint="@android:color/transparent" />
+        <com.google.android.material.button.MaterialButton android:id="@+id/btnMaskCancel"
+            style="?attr/materialIconButtonStyle" android:layout_width="0dp" android:layout_weight="1" android:layout_height="48dp"
+            android:contentDescription="@string/mask_cancel" app:icon="@android:drawable/ic_menu_close_clear_cancel" app:iconSize="22dp"
+            app:iconTint="@color/white" app:backgroundTint="@android:color/transparent" />
+    </LinearLayout>
+
     <!-- Action buttons (bottom right) -->
-    <LinearLayout
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_margin="16dp"
-        android:orientation="horizontal"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
+    <LinearLayout android:id="@+id/editorActions"
+        android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:layout_margin="16dp" android:orientation="horizontal"
+        app:layout_constraintBottom_toBottomOf="parent" app:layout_constraintEnd_toEndOf="parent">
 
         <com.google.android.material.floatingactionbutton.FloatingActionButton
             android:id="@+id/btnDetectPose"

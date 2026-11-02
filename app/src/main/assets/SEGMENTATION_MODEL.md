@@ -20,3 +20,19 @@ Download URLs are https://storage.googleapis.com/mediapipe-models/{version}/{ass
 - Mask bounds are mapped back to preview coordinates; the save path converts them to original image coordinates.
 
 Actual same-image Android comparison artifacts, if available locally: build/reports/segmentation-comparison/android/.
+
+## Point-selected mosaic
+
+The separate bystander icon uses `magic_touch.tflite` (6,227,884 bytes), official
+`interactive_segmenter/magic_touch/float32/1`, SHA-256
+`e24338a717c1b7ad8d159666677ef400babb7f33b8ad60c4d96db4ecf694cd25`.
+Source: https://storage.googleapis.com/mediapipe-models/interactive_segmenter/magic_touch/float32/1/magic_touch.tflite
+
+- Tap the visible part of a person; subsequent taps add to the selection. Add/erase brushes and undo allow manual refinement.
+- A compact icon toolbar replaces normal editor actions. Tool choices are in a popup; brush size and mosaic strength are in a dialog. Two fingers keep zoom/pan available.
+- Masks are stored in full preview-image coordinates and use the same viewport transform as the photo. Saving maps pixel centers to the full-resolution, EXIF-oriented image.
+- MediaPipe Tasks Vision 0.10.9's interactive Java converter omits `Point.normalized=true`: the keypoint must contain **input-image pixel coordinates**, despite its `NormalizedKeypoint` type. Recheck this when upgrading MediaPipe. The Android result has one foreground confidence mask; threshold at 0.5.
+- The compact toolbar has separate direct actions for overwrite (fifth icon) and save copy (sixth icon), with cancel seventh. Its width adapts to the screen. Overwrite keeps the same URI/name/resolution and refreshes the editor; Android write permission is requested when necessary. Denial retains the mask and discards the pending temporary file.
+- Mosaic block size is saved immediately to app settings and restored when the editor opens, including after process restart.
+- JPEG/PNG/WebP overwrite uses the actual source encoding (JPEG quality 100; lossless PNG/WebP where supported), rather than writing PNG data under another extension. Other formats offer the PNG copy path. JPEG recompression can affect pixels outside the mask.
+- Save copy creates a new full-resolution PNG in `Pictures/AutoCropAlbum`; unselected decoded pixels stay unchanged and the source is unchanged. A selected foreground is not guaranteed to correspond to exactly one person, so inspect the green mask and mosaic preview before saving.
