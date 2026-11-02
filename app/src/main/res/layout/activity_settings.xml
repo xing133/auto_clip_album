@@ -44,7 +44,24 @@
                 android:textColor="?attr/colorPrimary"
                 android:layout_marginBottom="16dp" />
 
-            <!-- Top Expansion Multiplier -->
+            <TextView
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="@string/segmentation_crop_padding_title"
+                android:textAppearance="?attr/textAppearanceBodyLarge"
+                android:textColor="?attr/colorOnSurface" />
+            <TextView
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/segmentation_crop_padding_description"
+                android:textAppearance="?attr/textAppearanceBodySmall"
+                android:textColor="?attr/colorOnSurfaceVariant" />
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnSegmentationCropPadding"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="8dp" android:layout_marginBottom="24dp"
+                style="@style/Widget.Material3.Button.OutlinedButton" />
+
+            <!-- Person-detection crop expansion -->
             <com.google.android.material.card.MaterialCardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"

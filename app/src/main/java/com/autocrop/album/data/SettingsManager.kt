@@ -15,6 +15,10 @@ class SettingsManager private constructor(context: Context) {
     companion object {
         private const val PREFS_NAME = "auto_crop_album_settings"
         private const val KEY_SEGMENTATION_MODEL = "segmentation_model"
+        private const val KEY_SEGMENTATION_CROP_PADDING = "segmentation_crop_padding_percent"
+        const val DEFAULT_SEGMENTATION_CROP_PADDING = 2
+        const val MIN_SEGMENTATION_CROP_PADDING = 0
+        const val MAX_SEGMENTATION_CROP_PADDING = 20
         private const val KEY_MOSAIC_BLOCK_SIZE = "mosaic_block_size"
         const val DEFAULT_MOSAIC_BLOCK_SIZE = 20
         const val MIN_MOSAIC_BLOCK_SIZE = 8
@@ -45,6 +49,15 @@ class SettingsManager private constructor(context: Context) {
 
     fun setSegmentationModel(model: SegmentationModel) {
         sharedPreferences.edit().putString(KEY_SEGMENTATION_MODEL, model.key).apply()
+    }
+
+    fun getSegmentationCropPaddingPercent(): Int = sharedPreferences.getInt(
+        KEY_SEGMENTATION_CROP_PADDING, DEFAULT_SEGMENTATION_CROP_PADDING
+    ).coerceIn(MIN_SEGMENTATION_CROP_PADDING, MAX_SEGMENTATION_CROP_PADDING)
+
+    fun setSegmentationCropPaddingPercent(percent: Int) {
+        require(percent in MIN_SEGMENTATION_CROP_PADDING..MAX_SEGMENTATION_CROP_PADDING)
+        sharedPreferences.edit().putInt(KEY_SEGMENTATION_CROP_PADDING, percent).apply()
     }
 
     fun getMosaicBlockSize(): Int {

@@ -43,7 +43,11 @@
     <!-- Settings Screen -->
     <string name="settings_title">Settings</string>
     <string name="settings_crop_box_title">Crop Box Settings</string>
-    <string name="settings_top_expansion_label">Crop Box Expansion</string>
+    <string name="segmentation_crop_padding_title">分割裁剪框外扩</string>
+    <string name="segmentation_crop_padding_description">点击分割区域生成裁剪框时，向四周留边。每边按人物框长边的百分比扩展，0% 不额外留边，范围 0%～20%。</string>
+    <string name="segmentation_crop_padding_value">每边外扩 %1$d%% · 点击调整</string>
+    <string name="segmentation_crop_outside_content">所选分割区域位于黑边中，请选择图片内容区域。</string>
+    <string name="settings_top_expansion_label">人物检测裁剪框外扩</string>
     <string name="settings_top_expansion_description">Extra margin added around the detected person on all sides. Higher values leave more room for a passport-style composition.</string>
     <string name="settings_min_value">0%</string>
     <string name="settings_max_value">30%</string>

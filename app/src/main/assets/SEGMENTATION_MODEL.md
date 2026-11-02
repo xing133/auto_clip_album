@@ -18,6 +18,7 @@ Download URLs are https://storage.googleapis.com/mediapipe-models/{version}/{ass
 - The arrow menu remembers the model selection. Switching while masks are displayed reruns inference on the current viewport and clears the previous masks.
 - All use MediaPipe Tasks Vision 0.10.9 CPU. Each task owns a copy of the bitmap because closing an MPImage recycles its wrapped bitmap in that SDK version.
 - Mask bounds are mapped back to preview coordinates; the save path converts them to original image coordinates.
+- Selected seg crops add configurable margin on all four sides: by default 2% of the region bounding box's long side per edge. Settings offers 0-20% in 1% steps, independently of person-detector expansion. Padding and the 20:9 aspect limit are constrained to the intersection of the current viewport and detected non-border content. Seg crops retain this content boundary during dragging, resizing, zoom and save; a selection entirely in a detected border produces no crop.
 
 Actual same-image Android comparison artifacts, if available locally: build/reports/segmentation-comparison/android/.
 

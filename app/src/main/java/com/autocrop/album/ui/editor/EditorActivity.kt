@@ -183,9 +183,23 @@ class EditorActivity : AppCompatActivity() {
     }
 
     private fun createImagePagerAdapter() = ImagePagerAdapter(imageUris) { position, pageBinding ->
-        pageBinding.cropOverlayView.onSegmentationRegionSelected = { rect ->
+        pageBinding.cropOverlayView.onSegmentationRegionSelected = selection@{ rect ->
             if (position == currentPosition) {
-                currentCropBoxes = listOf(CropBox(id = 0, rect = rect, isSelected = true))
+                val contentBounds = currentLetterboxResult?.bounds?.takeUnless { it.isEmpty }?.let { RectF(it) }
+                val available = pageBinding.cropOverlayView.getVisibleImageRect()
+                val expanded = RectF(rect)
+                if ((contentBounds != null && !available.intersect(contentBounds)) || !expanded.intersect(available)) {
+                    currentCropBoxes = emptyList()
+                    pageBinding.cropOverlayView.setCropBoxes(currentCropBoxes)
+                    showError(getString(R.string.segmentation_crop_outside_content))
+                    return@selection
+                }
+                // Keep the margin in image coordinates so it scales with the subject when zoomed.
+                val padding = maxOf(expanded.width(), expanded.height()) * settingsManager.getSegmentationCropPaddingPercent() / 100f
+                expanded.inset(-padding, -padding)
+                expanded.intersect(available)
+                currentCropBoxes = listOf(CropBox(id = 0, rect = expanded, isSelected = true,
+                    contentBounds = contentBounds))
                 pageBinding.cropOverlayView.setCropBoxes(currentCropBoxes)
                 pageBinding.cropOverlayView.getSelectedCropBox()?.let { constrained ->
                     currentCropBoxes = listOf(constrained)

@@ -32,6 +32,14 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun setupUI() {
+        binding.btnSegmentationCropPadding.setOnClickListener {
+            showNumberInputDialog(this, getString(R.string.segmentation_crop_padding_title),
+                settingsManager.getSegmentationCropPaddingPercent(),
+                SettingsManager.MIN_SEGMENTATION_CROP_PADDING, SettingsManager.MAX_SEGMENTATION_CROP_PADDING) { percent ->
+                settingsManager.setSegmentationCropPaddingPercent(percent)
+                updateSegmentationCropPadding()
+            }
+        }
         binding.btnPageSize.setOnClickListener {
             showNumberInputDialog(this, getString(R.string.page_size_title), settingsManager.getPageSize(),
                 SettingsManager.MIN_PAGE_SIZE, SettingsManager.MAX_PAGE_SIZE) { size ->
@@ -57,7 +65,13 @@ class SettingsActivity : AppCompatActivity() {
         binding.btnPageSize.text = getString(R.string.page_size_value, settingsManager.getPageSize())
     }
 
+    private fun updateSegmentationCropPadding() {
+        binding.btnSegmentationCropPadding.text = getString(R.string.segmentation_crop_padding_value,
+            settingsManager.getSegmentationCropPaddingPercent())
+    }
+
     private fun loadSettings() {
+        updateSegmentationCropPadding()
         updatePageSize()
         val currentValue = settingsManager.getExpansionRatio()
         binding.sliderTopExpansion.value = currentValue

@@ -242,7 +242,10 @@ class CropOverlayView @JvmOverloads constructor(
     /**
      * 获取当前选中的裁剪框
      */
-    fun getSelectedCropBox(): CropBox? = selectedCropBox?.let { it.copyWithRect(visibleCropRect(it)) }
+    fun getSelectedCropBox(): CropBox? = selectedCropBox?.let {
+        val visible = visibleCropRect(it)
+        if (visible.isEmpty) null else it.copyWithRect(visible)
+    }
 
     fun getVisibleImageRect(): RectF = viewport.visibleRegion().let {
         RectF(it.left, it.top, it.right, it.bottom)
@@ -253,10 +256,12 @@ class CropOverlayView @JvmOverloads constructor(
     private fun visibleCropRect(box: CropBox): RectF {
         if (imageWidth <= 0 || imageHeight <= 0) return RectF(box.rect)
         val rect = box.rect
-        val region = viewport.visibleRegion().constrain(
+        val available = getVisibleImageRect()
+        if (box.contentBounds?.let { !available.intersect(it) } == true) return RectF()
+        val region = ImageViewport.Region(available.left, available.top, available.right, available.bottom).constrain(
             ImageViewport.Region(rect.left, rect.top, rect.right, rect.bottom))
         return CropCalculator.constrainCropAspect(
-            RectF(region.left, region.top, region.right, region.bottom), getVisibleImageRect())
+            RectF(region.left, region.top, region.right, region.bottom), available)
     }
 
     /**
@@ -347,7 +352,9 @@ class CropOverlayView @JvmOverloads constructor(
 
     private fun drawCropBoxes(canvas: Canvas) {
         cropBoxes.forEach { cropBox ->
-            val rect = imageRectToViewRect(visibleCropRect(cropBox))
+            val visible = visibleCropRect(cropBox)
+            if (visible.isEmpty) return@forEach
+            val rect = imageRectToViewRect(visible)
             val isSelected = cropBox == selectedCropBox
 
             // 绘制填充
@@ -386,7 +393,9 @@ class CropOverlayView @JvmOverloads constructor(
     private fun drawPersonLabels(canvas: Canvas) {
         cropBoxes.forEach { cropBox ->
             if (cropBox.personId != null) {
-                val rect = imageRectToViewRect(visibleCropRect(cropBox))
+                val visible = visibleCropRect(cropBox)
+                if (visible.isEmpty) return@forEach
+                val rect = imageRectToViewRect(visible)
                 val label = "Person ${cropBox.personId + 1}"
                 val textWidth = personLabelPaint.measureText(label)
                 val textX = rect.left + 10f
@@ -538,7 +547,9 @@ class CropOverlayView @JvmOverloads constructor(
         val point = PointF(x, y)
         val margin = 24f * resources.displayMetrics.density
         return cropBoxes.any { box ->
-            val rect = imageRectToViewRect(visibleCropRect(box))
+            val visible = visibleCropRect(box)
+            if (visible.isEmpty) return@any false
+            val rect = imageRectToViewRect(visible)
             val expanded = RectF(rect).apply { inset(-margin, -margin) }
             expanded.contains(x, y) || findTouchedCorner(point, rect) != Corner.NONE
         }
@@ -547,7 +558,9 @@ class CropOverlayView @JvmOverloads constructor(
     private fun findTouchedCropBox(point: PointF): CropBox? {
         // 从后往前查找（优先选择最上层的）
         return cropBoxes.asReversed().firstOrNull { cropBox ->
-            val viewRect = imageRectToViewRect(visibleCropRect(cropBox))
+            val visible = visibleCropRect(cropBox)
+            if (visible.isEmpty) return@firstOrNull false
+            val viewRect = imageRectToViewRect(visible)
             // 扩大触摸区域
             viewRect.inset(-20f, -20f)
             viewRect.contains(point.x, point.y)
