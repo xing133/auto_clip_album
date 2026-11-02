@@ -63,4 +63,5 @@
     <string name="page_size_value">每页 %1$d 张</string>
     <string name="page_size_description">默认每页 1000 张，可设置 1–10000 张。</string>
     <string name="gallery_load_failed">图片加载失败，点击重试</string>
+    <string name="folder_switch_description">%1$s，点击切换目录</string>
 </resources>

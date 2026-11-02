@@ -109,6 +109,7 @@ class GalleryActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         setSupportActionBar(binding.toolbar)
+        supportActionBar?.setDisplayShowTitleEnabled(false)
 
         initPermissionLauncher()
         initEditorLauncher()
@@ -217,7 +218,8 @@ class GalleryActivity : AppCompatActivity() {
     }
 
     private fun setupFolderSelector() {
-        binding.btnSelectFolder.setOnClickListener {
+        updateTitle(currentFolder)
+        binding.folderName.setOnClickListener {
             showFolderSelector()
         }
     }
@@ -362,10 +364,8 @@ class GalleryActivity : AppCompatActivity() {
     }
 
     private fun updateTitle(folderPath: String?) {
-        if (folderPath == null) {
-            binding.toolbar.title = getString(R.string.gallery_title)
-        } else {
-            binding.toolbar.title = File(folderPath).name
-        }
+        val name = folderPath?.let { File(it).name } ?: getString(R.string.gallery_title)
+        binding.folderName.text = name
+        binding.folderName.contentDescription = getString(R.string.folder_switch_description, name)
     }
 }
