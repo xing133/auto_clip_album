@@ -9,11 +9,10 @@ import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /**
- * 黑边检测器 - 改进版
+ * 边框检测器：保留黑边统计，并检测灰/白等中性背景及背景上的 UI。
  *
- * 结合两种检测策略：
- * 1. 基于亮度统计（原有逻辑）- 适用于纯黑边
- * 2. 基于边缘检测（新逻辑）- 适用于有UI元素的黑边
+ * 优先使用边缘主色与持续内容分界，支持黑、灰、白背景及其上的 UI 元素。
+ * 未检出时保留亮度统计和 Sobel 边缘检测的黑边处理。
  *
  * 新算法思路：
  * - 黑边和有效内容之间通常有明显的分界线
@@ -103,7 +102,7 @@ object LetterboxDetector {
     )
 
     /**
-     * 仅检测黑边，返回检测结果（不执行裁剪）
+     * 检测黑、灰、白背景边框，返回检测结果（不执行裁剪）
      */
     fun detect(bitmap: Bitmap): DetectionResult {
         return detectContentBounds(bitmap)
@@ -184,15 +183,22 @@ object LetterboxDetector {
         // 方法2：基于边缘检测（新逻辑）
         val edgeResult = detectByEdges(bitmap, analysis, luma)
 
+        // Neutral backgrounds (black/grey/white) with sparse UI need a robust colour-mode check.
+        val border = BorderAnalyzer.detect(pixels, analysisBitmap.width, analysisBitmap.height)
+
         if (analysis.shouldRecycle) {
             analysisBitmap.recycle()
         }
 
-        // 结合两种方法：对于每个方向，取裁剪更多的结果
-        val combinedTop = max(brightnessResult.trimmedRatios.top, edgeResult.trimmedRatios.top)
-        val combinedBottom = max(brightnessResult.trimmedRatios.bottom, edgeResult.trimmedRatios.bottom)
-        val combinedLeft = max(brightnessResult.trimmedRatios.left, edgeResult.trimmedRatios.left)
-        val combinedRight = max(brightnessResult.trimmedRatios.right, edgeResult.trimmedRatios.right)
+        // Prefer a verified colour-background boundary; preserve legacy black-border fallback.
+        val combinedTop = if (border.top > 0) border.top.toFloat() / analysisBitmap.height
+            else max(brightnessResult.trimmedRatios.top, edgeResult.trimmedRatios.top)
+        val combinedBottom = if (border.bottom > 0) border.bottom.toFloat() / analysisBitmap.height
+            else max(brightnessResult.trimmedRatios.bottom, edgeResult.trimmedRatios.bottom)
+        val combinedLeft = if (border.left > 0) border.left.toFloat() / analysisBitmap.width
+            else max(brightnessResult.trimmedRatios.left, edgeResult.trimmedRatios.left)
+        val combinedRight = if (border.right > 0) border.right.toFloat() / analysisBitmap.width
+            else max(brightnessResult.trimmedRatios.right, edgeResult.trimmedRatios.right)
 
         // 计算最终边界
         val finalBounds = Rect(
