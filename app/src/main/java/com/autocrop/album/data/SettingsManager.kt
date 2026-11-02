@@ -2,6 +2,7 @@ package com.autocrop.album.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.autocrop.album.domain.SegmentationModel
 
 /**
  * 设置管理器 - 使用 SharedPreferences 保存用户配置
@@ -13,6 +14,7 @@ class SettingsManager private constructor(context: Context) {
 
     companion object {
         private const val PREFS_NAME = "auto_crop_album_settings"
+        private const val KEY_SEGMENTATION_MODEL = "segmentation_model"
         private const val KEY_PAGE_SIZE = "page_size"
         const val DEFAULT_PAGE_SIZE = 1000
         const val MIN_PAGE_SIZE = 1
@@ -31,6 +33,13 @@ class SettingsManager private constructor(context: Context) {
                 instance ?: SettingsManager(context).also { instance = it }
             }
         }
+    }
+
+    fun getSegmentationModel(): SegmentationModel = SegmentationModel.fromKey(
+        sharedPreferences.getString(KEY_SEGMENTATION_MODEL, null))
+
+    fun setSegmentationModel(model: SegmentationModel) {
+        sharedPreferences.edit().putString(KEY_SEGMENTATION_MODEL, model.key).apply()
     }
 
     fun getPageSize(): Int = sharedPreferences.getInt(KEY_PAGE_SIZE, DEFAULT_PAGE_SIZE)

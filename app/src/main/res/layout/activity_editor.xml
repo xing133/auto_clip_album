@@ -139,6 +139,33 @@
         app:srcCompat="@android:drawable/arrow_up_float"
         app:tint="@color/white" />
 
+    <LinearLayout android:id="@+id/segmentationControls"
+        android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:layout_marginStart="16dp" android:layout_marginBottom="8dp"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/btnExpandOptions">
+        <com.google.android.material.button.MaterialButton android:id="@+id/btnSegment"
+            style="?attr/materialIconButtonStyle"
+            android:layout_width="48dp" android:layout_height="48dp"
+            android:contentDescription="@string/segmentation_test"
+            app:icon="@drawable/ic_segment" app:iconSize="22dp" app:iconTint="@color/white"
+            app:backgroundTint="@color/overlay_background" />
+        <com.google.android.material.button.MaterialButton android:id="@+id/btnSegmentModel"
+            style="?attr/materialIconButtonStyle"
+            android:layout_width="48dp" android:layout_height="48dp"
+            android:contentDescription="@string/segmentation_model_select"
+            app:icon="@drawable/ic_expand_more" app:iconSize="18dp" app:iconTint="@color/white"
+            app:backgroundTint="@color/overlay_background" />
+    </LinearLayout>
+
+    <TextView android:id="@+id/segmentationHint"
+        android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp" android:padding="8dp"
+        android:background="@color/overlay_background" android:textColor="@color/white"
+        android:text="@string/segmentation_hint" android:visibility="gone"
+        app:layout_constraintStart_toStartOf="parent" app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/segmentationControls" />
+
     <!-- Action buttons (bottom right) -->
     <LinearLayout
         android:layout_width="wrap_content"

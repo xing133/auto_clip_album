@@ -64,4 +64,13 @@
     <string name="page_size_description">默认每页 1000 张，可设置 1–10000 张。</string>
     <string name="gallery_load_failed">图片加载失败，点击重试</string>
     <string name="folder_switch_description">%1$s，点击切换目录</string>
+    <string name="segmentation_test">分割测试</string>
+    <string name="segmentation_exit">退出分割</string>
+    <string name="segmentation_hint">点击彩色区域生成裁剪框</string>
+    <string name="segmenting_image">正在分割当前可见内容…</string>
+    <string name="segmentation_empty">未识别到可选择的物体区域</string>
+    <string name="segmentation_failed">图片分割失败：%1$s</string>
+    <string name="segmentation_model_select">选择分割模型</string>
+    <string name="segmentation_model_current">当前模型：%1$s，点击切换</string>
+    <string name="segmentation_model_action">%1$s：%2$s</string>
 </resources>

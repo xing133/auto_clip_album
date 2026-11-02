@@ -30,6 +30,11 @@ class ImagePagerAdapter(
 
     override fun getItemCount(): Int = imageUris.size
 
+    override fun onViewRecycled(holder: ImagePageViewHolder) {
+        holder.getBinding().cropOverlayView.clearSegmentation()
+        super.onViewRecycled(holder)
+    }
+
     inner class ImagePageViewHolder(
         private val binding: PageEditorImageBinding
     ) : RecyclerView.ViewHolder(binding.root) {

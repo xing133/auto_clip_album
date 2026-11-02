@@ -30,6 +30,11 @@ import com.autocrop.album.databinding.ActivityEditorBinding
 import com.autocrop.album.databinding.PageEditorImageBinding
 import com.autocrop.album.domain.CropCalculator
 import com.autocrop.album.domain.ImageProcessor
+import com.autocrop.album.domain.ImageSegmentation
+import com.autocrop.album.domain.SegmentationModel
+import androidx.appcompat.widget.PopupMenu
+import androidx.appcompat.widget.TooltipCompat
+import kotlinx.coroutines.CancellationException
 import com.autocrop.album.domain.PersonDetector
 import com.autocrop.album.ui.editor.ImagePagerAdapter
 import kotlinx.coroutines.Dispatchers
@@ -62,6 +67,8 @@ class EditorActivity : AppCompatActivity() {
     private var currentLetterboxResult: com.autocrop.album.domain.LetterboxDetector.DetectionResult? = null
 
     private lateinit var gestureDetector: GestureDetectorCompat
+    private var segmentationModel = SegmentationModel.MULTICLASS
+    private var segmentationTouch = false
     private var imageSwipeCandidate = false
     private var imageSwipeStartX = 0f
     private var imageSwipeStartY = 0f
@@ -83,6 +90,7 @@ class EditorActivity : AppCompatActivity() {
         imageProcessor = ImageProcessor(this)
         repository = MediaStoreRepository(this)
         settingsManager = SettingsManager.getInstance(this)
+        segmentationModel = settingsManager.getSegmentationModel()
         registerEditPermissionLauncher()
         registerDeletePermissionLauncher()
 
@@ -124,12 +132,15 @@ class EditorActivity : AppCompatActivity() {
 
         binding.viewPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
             override fun onPageSelected(position: Int) {
+                currentPageBinding()?.cropOverlayView?.clearSegmentation()
                 currentPosition = position
                 currentCropBoxes = emptyList()
                 currentLetterboxResult = null
                 currentBitmap?.recycle()
                 currentBitmap = null
                 binding.btnDetectPose.isEnabled = false
+                binding.btnSegment.isEnabled = false
+                binding.btnSegmentModel.isEnabled = false
 
                 // 更新导航按钮的可见性
                 updateNavigationButtons()
@@ -149,9 +160,111 @@ class EditorActivity : AppCompatActivity() {
         updateNavigationButtons()
     }
 
-    private fun createImagePagerAdapter() = ImagePagerAdapter(imageUris) { position, _ ->
-        // A selected page may only be bound after onPageSelected has run.
+    private fun currentPageBinding(): PageEditorImageBinding? {
+        val holder = (binding.viewPager.getChildAt(0) as? androidx.recyclerview.widget.RecyclerView)
+            ?.findViewHolderForAdapterPosition(currentPosition) as? ImagePagerAdapter.ImagePageViewHolder
+        return holder?.getBinding()
+    }
+
+    private fun createImagePagerAdapter() = ImagePagerAdapter(imageUris) { position, pageBinding ->
+        pageBinding.cropOverlayView.onSegmentationRegionSelected = { rect ->
+            if (position == currentPosition) {
+                currentCropBoxes = listOf(CropBox(id = 0, rect = rect, isSelected = true))
+                pageBinding.cropOverlayView.setCropBoxes(currentCropBoxes)
+                pageBinding.cropOverlayView.getSelectedCropBox()?.let { constrained ->
+                    currentCropBoxes = listOf(constrained)
+                    val actual = constrained.rect
+                    android.util.Log.d("EditorActivity", "Segmentation crop constrained: $actual ratio=${actual.width() / actual.height()}")
+                }
+            }
+        }
+        pageBinding.cropOverlayView.onSegmentationModeChanged = { showing ->
+            if (position == currentPosition) updateSegmentationUi(showing)
+        }
         if (position == currentPosition) loadCurrentImageWhenReady()
+    }
+
+    private fun updateSegmentationUi(showing: Boolean) {
+        binding.btnSegment.setIconResource(if (showing) R.drawable.ic_back else R.drawable.ic_segment)
+        val action = getString(if (showing) R.string.segmentation_exit else R.string.segmentation_test)
+        val description = getString(R.string.segmentation_model_action, action, segmentationModel.displayName)
+        binding.btnSegment.contentDescription = description
+        TooltipCompat.setTooltipText(binding.btnSegment, description)
+        val modelDescription = getString(R.string.segmentation_model_current, segmentationModel.displayName)
+        binding.btnSegmentModel.contentDescription = modelDescription
+        TooltipCompat.setTooltipText(binding.btnSegmentModel, modelDescription)
+        binding.segmentationHint.visibility = if (showing) View.VISIBLE else View.GONE
+        binding.btnCrop.isEnabled = !isProcessing && !showing
+    }
+
+    private fun showSegmentationModels() {
+        if (isProcessing) return
+        val models = SegmentationModel.values()
+        PopupMenu(this, binding.btnSegmentModel).apply {
+            models.forEachIndexed { index, model ->
+                menu.add(0, index + 1, index, model.displayName).apply {
+                    isCheckable = true
+                    isChecked = model == segmentationModel
+                }
+            }
+            menu.setGroupCheckable(0, true, true)
+            setOnMenuItemClickListener { item ->
+                val model = models[item.itemId - 1]
+                if (model != segmentationModel) {
+                    val overlay = currentPageBinding()?.cropOverlayView
+                    val rerun = overlay?.isShowingSegmentation == true
+                    overlay?.clearSegmentation()
+                    segmentationModel = model
+                    settingsManager.setSegmentationModel(model)
+                    updateSegmentationUi(false)
+                    if (rerun) testSegmentation()
+                }
+                true
+            }
+            show()
+        }
+    }
+
+    private fun testSegmentation() {
+        if (isProcessing) return
+        val model = segmentationModel
+        val bitmap = currentBitmap ?: return
+        val page = currentPageBinding() ?: return
+        val overlay = page.cropOverlayView
+        if (overlay.isShowingSegmentation) {
+            overlay.clearSegmentation()
+            return
+        }
+        val visible = overlay.getVisibleImageRect()
+        if (visible.isEmpty) return
+        val left = ceil(visible.left).toInt().coerceIn(0, bitmap.width - 1)
+        val top = ceil(visible.top).toInt().coerceIn(0, bitmap.height - 1)
+        val right = floor(visible.right).toInt().coerceIn(left + 1, bitmap.width)
+        val bottom = floor(visible.bottom).toInt().coerceIn(top + 1, bitmap.height)
+        val imageBounds = RectF(left.toFloat(), top.toFloat(), right.toFloat(), bottom.toFloat())
+        // Detach inference input from the Activity bitmap before a destroy/cancel can recycle it.
+        val snapshot = Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top).let {
+            if (it === bitmap) bitmap.copy(Bitmap.Config.ARGB_8888, false) else it
+        }
+        lifecycleScope.launch {
+            isProcessing = true
+            showLoading(true, getString(R.string.segmenting_image))
+            try {
+                val regions = withContext(Dispatchers.Default) {
+                    ImageSegmentation(this@EditorActivity).segment(snapshot, model)
+                }
+                if (regions.regions.isEmpty()) showError(getString(R.string.segmentation_empty))
+                else overlay.showSegmentation(regions, imageBounds)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                showError(getString(R.string.segmentation_failed, e.message ?: e.javaClass.simpleName))
+            } finally {
+                snapshot.recycle()
+                isProcessing = false
+                showLoading(false)
+            }
+        }
     }
 
     private fun loadCurrentImageWhenReady() {
@@ -165,6 +278,10 @@ class EditorActivity : AppCompatActivity() {
     }
 
     private fun setupButtons() {
+        binding.btnSegment.setOnClickListener { testSegmentation() }
+        binding.btnSegmentModel.setOnClickListener { showSegmentationModels() }
+        updateSegmentationUi(false)
+        binding.btnSegment.isEnabled = currentBitmap != null && !isProcessing
         binding.btnCrop.setOnClickListener {
             performCrop()
         }
@@ -379,7 +496,7 @@ class EditorActivity : AppCompatActivity() {
     }
 
     private fun createManualCropBox() {
-        if (currentBitmap == null) return
+        if (currentBitmap == null || currentPageBinding()?.cropOverlayView?.isShowingSegmentation == true) return
 
         val currentHolder = (binding.viewPager.getChildAt(0) as? androidx.recyclerview.widget.RecyclerView)
             ?.findViewHolderForAdapterPosition(currentPosition) as? ImagePagerAdapter.ImagePageViewHolder
@@ -613,6 +730,9 @@ class EditorActivity : AppCompatActivity() {
         holder?.getBinding()?.cropOverlayView?.interactionEnabled = !isProcessing
         updateNavigationButtons()
         binding.btnDetectPose.isEnabled = !isProcessing && currentBitmap != null && isPersonDetectorReady
+        binding.btnSegment.isEnabled = !isProcessing && currentBitmap != null
+        binding.btnSegmentModel.isEnabled = !isProcessing && currentBitmap != null
+        updateSegmentationUi(holder?.getBinding()?.cropOverlayView?.isShowingSegmentation == true)
         binding.progressBar.visibility = if (show) View.VISIBLE else View.GONE
         if (show && message != null) {
             showStatus(message)
@@ -644,6 +764,7 @@ class EditorActivity : AppCompatActivity() {
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                segmentationTouch = currentPageBinding()?.cropOverlayView?.isShowingSegmentation == true
                 imageSwipeCandidate = false
                 if (!isProcessing && currentBitmap != null &&
                     binding.viewPager.scrollState == ViewPager2.SCROLL_STATE_IDLE) {
@@ -655,7 +776,7 @@ class EditorActivity : AppCompatActivity() {
                         val x = ev.rawX - location[0]
                         val y = ev.rawY - location[1]
                         imageSwipeCandidate = x >= 0 && x < overlay.width &&
-                            y >= 0 && y < overlay.height && !overlay.isZoomed && !overlay.isNearCropBox(x, y)
+                            y >= 0 && y < overlay.height && !overlay.isZoomed && !overlay.isShowingSegmentation && !overlay.isNearCropBox(x, y)
                     }
                 }
                 imageSwipeStartX = ev.rawX
@@ -678,7 +799,7 @@ class EditorActivity : AppCompatActivity() {
                 imageSwipeCandidate = false
             }
         }
-        gestureDetector.onTouchEvent(ev)
+        if (!segmentationTouch) gestureDetector.onTouchEvent(ev)
         return super.dispatchTouchEvent(ev)
     }
 

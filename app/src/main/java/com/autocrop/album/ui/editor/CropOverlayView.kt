@@ -1,6 +1,7 @@
 package com.autocrop.album.ui.editor
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -11,10 +12,12 @@ import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
+import android.view.ViewConfiguration
 import androidx.core.content.ContextCompat
 import com.autocrop.album.R
 import com.autocrop.album.data.models.CropBox
 import com.autocrop.album.domain.CropCalculator
+import com.autocrop.album.domain.SegmentationRegions
 import kotlin.math.sqrt
 
 /**
@@ -64,6 +67,84 @@ class CropOverlayView @JvmOverloads constructor(
             // Double-tap remains the editor's manual-crop gesture.
             isQuickScaleEnabled = false
         }
+
+    private var segmentation: SegmentationRegions? = null
+    private var segmentationBounds: SegmentationRegions.Bounds? = null
+    private var segmentationBitmap: Bitmap? = null
+    private val segmentationPaint = Paint()
+    private var segmentationTap = false
+    private val segmentationDown = PointF()
+    private val segmentationLast = PointF()
+    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
+    val isShowingSegmentation: Boolean get() = segmentation != null
+    var onSegmentationRegionSelected: ((RectF) -> Unit)? = null
+    var onSegmentationModeChanged: ((Boolean) -> Unit)? = null
+
+    fun showSegmentation(regions: SegmentationRegions, imageBounds: RectF) {
+        clearSegmentation()
+        val palette = intArrayOf(0x7063e6be, 0x70ff6b6b, 0x704dabf7, 0x70ffd43b,
+            0x70da77f2, 0x70ff922b, 0x7066d9e8, 0x70a9e34b)
+        segmentationBitmap = Bitmap.createBitmap(regions.colorPixels(palette), regions.width,
+            regions.height, Bitmap.Config.ARGB_8888)
+        segmentation = regions
+        segmentationBounds = SegmentationRegions.Bounds(imageBounds.left, imageBounds.top, imageBounds.right, imageBounds.bottom)
+        touchMode = TouchMode.NONE
+        onSegmentationModeChanged?.invoke(true)
+        invalidate()
+    }
+
+    fun clearSegmentation() {
+        val wasShowing = isShowingSegmentation
+        segmentation = null
+        segmentationBounds = null
+        // A hardware display list may still reference the previous bitmap; let GC release it safely.
+        segmentationBitmap = null
+        segmentationTap = false
+        if (wasShowing) onSegmentationModeChanged?.invoke(false)
+        invalidate()
+    }
+
+    private fun drawSegmentation(canvas: Canvas) {
+        val bitmap = segmentationBitmap ?: return
+        val bounds = segmentationBounds ?: return
+        val target = imageRectToViewRect(RectF(bounds.left, bounds.top, bounds.right, bounds.bottom))
+        canvas.drawBitmap(bitmap, null, target, segmentationPaint)
+    }
+
+    private fun handleSegmentationTouch(event: MotionEvent, point: PointF): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                segmentationDown.set(point)
+                segmentationLast.set(point)
+                segmentationTap = true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (distance(point, segmentationDown) > touchSlop) segmentationTap = false
+                if (isZoomed) {
+                    viewport.pan(point.x - segmentationLast.x, point.y - segmentationLast.y)
+                    applyViewport()
+                }
+                segmentationLast.set(point)
+            }
+            MotionEvent.ACTION_UP -> {
+                if (segmentationTap && distance(point, segmentationDown) <= touchSlop) {
+                    val regions = segmentation ?: return true
+                    val image = segmentationBounds ?: return true
+                    val region = regions.regionAtImage(viewport.imageX(point.x), viewport.imageY(point.y), image)
+                    if (region != null) {
+                        val bounds = regions.boundsInImage(region, image)
+                        val rect = RectF(bounds.left, bounds.top, bounds.right, bounds.bottom)
+                        clearSegmentation()
+                        onSegmentationRegionSelected?.invoke(rect)
+                        performClick()
+                    }
+                }
+                segmentationTap = false
+            }
+            MotionEvent.ACTION_CANCEL -> segmentationTap = false
+        }
+        return true
+    }
 
     // 触摸状态
     private var touchMode = TouchMode.NONE
@@ -131,8 +212,9 @@ class CropOverlayView @JvmOverloads constructor(
      * 设置裁剪框列表
      */
     fun setCropBoxes(boxes: List<CropBox>) {
-        cropBoxes = boxes.toMutableList()
-        selectedCropBox = boxes.firstOrNull { it.isSelected }
+        clearSegmentation()
+        cropBoxes = boxes.map { it.copyWithRect(visibleCropRect(it)) }.toMutableList()
+        selectedCropBox = cropBoxes.firstOrNull { it.isSelected }
         invalidate()
     }
 
@@ -148,8 +230,9 @@ class CropOverlayView @JvmOverloads constructor(
      * 添加裁剪框
      */
     fun addCropBox(box: CropBox) {
-        cropBoxes.add(box)
-        selectedCropBox = box
+        val constrainedBox = box.copyWithRect(visibleCropRect(box))
+        cropBoxes.add(constrainedBox)
+        selectedCropBox = constrainedBox
         invalidate()
     }
 
@@ -165,10 +248,12 @@ class CropOverlayView @JvmOverloads constructor(
     var interactionEnabled = true
 
     private fun visibleCropRect(box: CropBox): RectF {
+        if (imageWidth <= 0 || imageHeight <= 0) return RectF(box.rect)
         val rect = box.rect
         val region = viewport.visibleRegion().constrain(
             ImageViewport.Region(rect.left, rect.top, rect.right, rect.bottom))
-        return RectF(region.left, region.top, region.right, region.bottom)
+        return CropCalculator.constrainCropAspect(
+            RectF(region.left, region.top, region.right, region.bottom), getVisibleImageRect())
     }
 
     /**
@@ -185,6 +270,7 @@ class CropOverlayView @JvmOverloads constructor(
     }
 
     fun resetImage() {
+        clearSegmentation()
         imageWidth = 0
         imageHeight = 0
         cropBoxes.clear()
@@ -216,6 +302,10 @@ class CropOverlayView @JvmOverloads constructor(
         super.onDraw(canvas)
 
         if (imageWidth == 0 || imageHeight == 0) return
+        if (isShowingSegmentation) {
+            drawSegmentation(canvas)
+            return
+        }
 
         // 1. 绘制黑边 debug 可视化（最先绘制，在底层）
         drawLetterboxDebug(canvas)
@@ -320,6 +410,7 @@ class CropOverlayView @JvmOverloads constructor(
         }
         if (event.actionMasked == MotionEvent.ACTION_POINTER_DOWN) {
             multiTouchGesture = true
+            segmentationTap = false
             touchMode = TouchMode.NONE
             touchingCorner = null
         }
@@ -345,6 +436,7 @@ class CropOverlayView @JvmOverloads constructor(
             return true
         }
         val touchPoint = PointF(event.x, event.y)
+        if (isShowingSegmentation) return handleSegmentationTouch(event, touchPoint)
 
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {

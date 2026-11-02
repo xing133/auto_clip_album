@@ -91,7 +91,20 @@ object CropCalculator {
             rect = avoidLetterboxRegions(rect, letterboxResult, imageWidth, imageHeight)
         }
 
-        return rect
+        val available = letterboxResult?.trimmedRatios?.let { ratios ->
+            RectF(imageWidth * ratios.left, imageHeight * ratios.top,
+                imageWidth * (1f - ratios.right), imageHeight * (1f - ratios.bottom))
+        } ?: RectF(0f, 0f, imageWidth.toFloat(), imageHeight.toFloat())
+        return constrainCropAspect(rect, available)
+    }
+
+    /** Shared final constraint for generated, manually edited and viewport-clipped crop boxes. */
+    fun constrainCropAspect(rect: RectF, bounds: RectF): RectF {
+        if (bounds.isEmpty) return RectF(rect)
+        val result = CropAspectRatio.fit(
+            CropAspectRatio.Box(rect.left, rect.top, rect.right, rect.bottom),
+            CropAspectRatio.Box(bounds.left, bounds.top, bounds.right, bounds.bottom))
+        return RectF(result.left, result.top, result.right, result.bottom)
     }
 
     /**
@@ -280,7 +293,8 @@ object CropCalculator {
         // 约束到图片边界
         adjustedRect = constrainToImageBounds(adjustedRect, imageWidth, imageHeight)
 
-        return cropBox.copyWithRect(adjustedRect)
+        return cropBox.copyWithRect(constrainCropAspect(adjustedRect,
+            RectF(0f, 0f, imageWidth.toFloat(), imageHeight.toFloat())))
     }
 
     /**
@@ -301,7 +315,7 @@ object CropCalculator {
 
         return CropBox(
             id = id,
-            rect = rect,
+            rect = constrainCropAspect(rect, RectF(0f, 0f, imageWidth.toFloat(), imageHeight.toFloat())),
             personId = null,  // 手动创建
             isSelected = true,
             confidence = 1.0f
