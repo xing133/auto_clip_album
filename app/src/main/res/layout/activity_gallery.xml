@@ -1,79 +1,53 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.coordinatorlayout.widget.CoordinatorLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="?attr/colorSurface"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:background="?attr/colorSurface"
     tools:context=".ui.gallery.GalleryActivity">
 
-    <com.google.android.material.appbar.AppBarLayout
-        android:id="@+id/appBarLayout"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:fitsSystemWindows="true">
+    <com.google.android.material.appbar.MaterialToolbar
+        android:id="@+id/toolbar" android:layout_width="match_parent"
+        android:layout_height="?attr/actionBarSize" app:title="@string/gallery_title"
+        app:titleTextColor="?attr/colorOnSurface" />
 
-        <com.google.android.material.appbar.MaterialToolbar
-            android:id="@+id/toolbar"
-            android:layout_width="match_parent"
-            android:layout_height="?attr/actionBarSize"
-            android:elevation="0dp"
-            app:title="@string/gallery_title"
-            app:titleTextColor="?attr/colorOnSurface"
-            app:menu="@menu/menu_gallery" />
-
-    </com.google.android.material.appbar.AppBarLayout>
-
-    <FrameLayout
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        app:layout_behavior="@string/appbar_scrolling_view_behavior">
-
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/recyclerView"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:clipToPadding="false"
-            android:padding="4dp"
+    <FrameLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+        <androidx.recyclerview.widget.RecyclerView android:id="@+id/recyclerView"
+            android:layout_width="match_parent" android:layout_height="match_parent"
+            android:clipToPadding="false" android:padding="4dp"
             tools:listitem="@layout/item_gallery_image" />
-
-        <com.autocrop.album.ui.gallery.FastScrollerView
-            android:id="@+id/fastScroller"
-            android:layout_width="32dp"
-            android:layout_height="match_parent"
-            android:layout_gravity="end" />
-
+        <com.autocrop.album.ui.gallery.FastScrollerView android:id="@+id/fastScroller"
+            android:layout_width="32dp" android:layout_height="match_parent" android:layout_gravity="end" />
+        <TextView android:id="@+id/emptyView" android:layout_width="wrap_content"
+            android:layout_height="wrap_content" android:layout_gravity="center"
+            android:padding="24dp" android:text="@string/no_images_found"
+            android:textAppearance="?attr/textAppearanceBodyLarge" android:visibility="gone" />
+        <com.google.android.material.progressindicator.CircularProgressIndicator android:id="@+id/progressBar"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:layout_gravity="center" android:indeterminate="true" android:visibility="gone" />
+        <com.google.android.material.floatingactionbutton.FloatingActionButton android:id="@+id/btnSelectFolder"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:layout_gravity="bottom|start" android:layout_margin="16dp"
+            android:contentDescription="@string/select_folder" app:srcCompat="@android:drawable/ic_menu_view" />
     </FrameLayout>
 
-    <TextView
-        android:id="@+id/emptyView"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="center"
-        android:text="@string/no_images_found"
-        android:textAppearance="?attr/textAppearanceBodyLarge"
-        android:textColor="?attr/colorOnSurfaceVariant"
-        android:visibility="gone"
-        tools:visibility="visible" />
-
-    <com.google.android.material.progressindicator.CircularProgressIndicator
-        android:id="@+id/progressBar"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="center"
-        android:indeterminate="true"
-        android:visibility="gone"
-        tools:visibility="visible" />
-
-    <!-- Folder selector button -->
-    <com.google.android.material.floatingactionbutton.FloatingActionButton
-        android:id="@+id/btnSelectFolder"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="bottom|start"
-        android:layout_margin="16dp"
-        android:contentDescription="@string/select_folder"
-        app:srcCompat="@android:drawable/ic_menu_view"
-        app:fabSize="normal" />
-
-</androidx.coordinatorlayout.widget.CoordinatorLayout>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="vertical" android:paddingHorizontal="8dp" android:paddingBottom="4dp">
+        <TextView android:id="@+id/pageRange" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:gravity="center"
+            android:textAppearance="?attr/textAppearanceBodySmall" android:paddingTop="4dp" />
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal" android:gravity="center_vertical">
+            <com.google.android.material.button.MaterialButton android:id="@+id/btnPreviousPage"
+                style="@style/Widget.Material3.Button.TextButton" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:text="@string/previous_page" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/btnPageNumber"
+                style="@style/Widget.Material3.Button.TextButton" android:layout_width="0dp"
+                android:layout_height="wrap_content" android:layout_weight="1" android:minWidth="0dp"
+                android:contentDescription="@string/jump_to_page" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/btnNextPage"
+                style="@style/Widget.Material3.Button.TextButton" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:text="@string/next_page" />
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>

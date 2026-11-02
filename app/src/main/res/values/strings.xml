@@ -53,4 +53,14 @@
     <string name="ok">OK</string>
     <string name="loading">Loading…</string>
     <string name="error_occurred">An error occurred</string>
+    <string name="previous_page">上一页</string>
+    <string name="next_page">下一页</string>
+    <string name="page_number">第 %1$d / %2$d 页</string>
+    <string name="page_range">第 %1$d–%2$d 张，共 %3$d 张</string>
+    <string name="jump_to_page">跳转到页</string>
+    <string name="number_out_of_range">请输入 %1$d–%2$d 之间的整数</string>
+    <string name="page_size_title">每页图片数</string>
+    <string name="page_size_value">每页 %1$d 张</string>
+    <string name="page_size_description">默认每页 1000 张，可设置 1–10000 张。</string>
+    <string name="gallery_load_failed">图片加载失败，点击重试</string>
 </resources>

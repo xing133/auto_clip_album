@@ -7,6 +7,11 @@ import android.content.Context
 import android.content.IntentSender
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
+import android.database.Cursor
+import com.autocrop.album.data.models.PageWindow
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import android.provider.MediaStore
 import com.autocrop.album.data.models.ImageItem
 import kotlinx.coroutines.Dispatchers
@@ -62,13 +67,17 @@ class MediaStoreRepository(private val context: Context) {
     }
 
     /**
-     * 查询所有图片
+     * 查询当前页图片，只为该页创建 ImageItem。
      * @param folderPath 可选的目录路径，如果指定则只显示该目录下的图片
      */
-    suspend fun queryImages(
-        sortOrder: ImageItem.Companion.SortOrder = ImageItem.Companion.SortOrder.DATE_MODIFIED_DESC,
-        folderPath: String? = null
-    ): List<ImageItem> =
+    data class ImagePage(val images: List<ImageItem>, val window: PageWindow)
+
+    suspend fun queryImagePage(
+        sortOrder: ImageItem.Companion.SortOrder,
+        folderPath: String?,
+        pageIndex: Int,
+        pageSize: Int
+    ): ImagePage =
         withContext(Dispatchers.IO) {
             val images = mutableListOf<ImageItem>()
             val projection = arrayOf(
@@ -84,8 +93,10 @@ class MediaStoreRepository(private val context: Context) {
                 MediaStore.Images.Media.DATA
             )
 
-            val selection = folderPath?.let { "${MediaStore.Images.Media.DATA} LIKE ?" }
-            val selectionArgs = folderPath?.let { arrayOf("$it/%") }
+            val selection = folderPath?.let { "${MediaStore.Images.Media.DATA} LIKE ? ESCAPE '\\'" }
+            val selectionArgs = folderPath?.let {
+                arrayOf(it.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "/%")
+            }
             val orderBy = when (sortOrder) {
                 ImageItem.Companion.SortOrder.NAME_ASC -> "${MediaStore.Images.Media.DISPLAY_NAME} ASC"
                 ImageItem.Companion.SortOrder.NAME_DESC -> "${MediaStore.Images.Media.DISPLAY_NAME} DESC"
@@ -95,13 +106,44 @@ class MediaStoreRepository(private val context: Context) {
                 ImageItem.Companion.SortOrder.DATE_TAKEN_DESC -> "${MediaStore.Images.Media.DATE_TAKEN} DESC"
             }
 
-            contentResolver.query(
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                projection,
-                selection,
-                selectionArgs,
-                orderBy
-            )?.use { cursor ->
+            val total = contentResolver.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                arrayOf(MediaStore.Images.Media._ID), selection, selectionArgs, null)?.use { it.count }
+                ?: error("Unable to count images")
+            currentCoroutineContext().ensureActive()
+            val window = PageWindow(total, pageSize, pageIndex)
+            if (total == 0) return@withContext ImagePage(emptyList(), window)
+            // A unique tie-breaker keeps equal names/timestamps stable across page boundaries.
+            val stableOrder = "$orderBy, ${MediaStore.Images.Media._ID} ASC"
+            var cursor: Cursor? = null
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val args = Bundle().apply {
+                    putString(ContentResolver.QUERY_ARG_SQL_SELECTION, selection)
+                    putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, selectionArgs)
+                    putString(ContentResolver.QUERY_ARG_SQL_SORT_ORDER, stableOrder)
+                    putInt(ContentResolver.QUERY_ARG_LIMIT, pageSize)
+                    putInt(ContentResolver.QUERY_ARG_OFFSET, window.offset)
+                }
+                cursor = try {
+                    contentResolver.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection, args, null)
+                } catch (e: IllegalArgumentException) {
+                    null // Provider rejects structured paging; use its legacy query below.
+                } catch (e: UnsupportedOperationException) {
+                    null
+                }
+                val honored = cursor?.extras?.getStringArray(ContentResolver.EXTRA_HONORED_ARGS)?.toSet().orEmpty()
+                if (!honored.containsAll(listOf(ContentResolver.QUERY_ARG_LIMIT, ContentResolver.QUERY_ARG_OFFSET))) {
+                    cursor?.close()
+                    cursor = null
+                }
+            }
+            val providerPaged = cursor != null
+            if (cursor == null) {
+                // Older/OEM providers may ignore paging arguments. Keep only one page in memory.
+                cursor = contentResolver.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                    projection, selection, selectionArgs, stableOrder)
+            }
+            (cursor ?: error("Unable to query images")).use { cursor ->
+                if (!providerPaged) cursor.moveToPosition(window.offset - 1)
                 val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
                 val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
                 val dateAddedColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_ADDED)
@@ -113,7 +155,8 @@ class MediaStoreRepository(private val context: Context) {
                 val heightColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.HEIGHT)
                 val dataColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATA)
 
-                while (cursor.moveToNext()) {
+                while (images.size < pageSize && cursor.moveToNext()) {
+                    currentCoroutineContext().ensureActive()
                     val id = cursor.getLong(idColumn)
                     val name = cursor.getString(nameColumn)
                     val dateAdded = Date(cursor.getLong(dateAddedColumn) * 1000)
@@ -150,7 +193,7 @@ class MediaStoreRepository(private val context: Context) {
                 }
             }
 
-            images
+            ImagePage(images, window)
         }
 
     /**

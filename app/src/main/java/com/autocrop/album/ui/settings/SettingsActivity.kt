@@ -6,6 +6,7 @@ import com.autocrop.album.R
 import com.autocrop.album.data.SettingsManager
 import com.autocrop.album.databinding.ActivitySettingsBinding
 import java.util.Locale
+import com.autocrop.album.ui.common.showNumberInputDialog
 
 /**
  * Settings Activity - 设置界面
@@ -31,6 +32,13 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun setupUI() {
+        binding.btnPageSize.setOnClickListener {
+            showNumberInputDialog(this, getString(R.string.page_size_title), settingsManager.getPageSize(),
+                SettingsManager.MIN_PAGE_SIZE, SettingsManager.MAX_PAGE_SIZE) { size ->
+                settingsManager.setPageSize(size)
+                updatePageSize()
+            }
+        }
         // 滑块变化监听
         binding.sliderTopExpansion.addOnChangeListener { _, value, fromUser ->
             if (fromUser) {
@@ -45,7 +53,12 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
+    private fun updatePageSize() {
+        binding.btnPageSize.text = getString(R.string.page_size_value, settingsManager.getPageSize())
+    }
+
     private fun loadSettings() {
+        updatePageSize()
         val currentValue = settingsManager.getExpansionRatio()
         binding.sliderTopExpansion.value = currentValue
         updateValueDisplay(currentValue)

@@ -13,6 +13,10 @@ class SettingsManager private constructor(context: Context) {
 
     companion object {
         private const val PREFS_NAME = "auto_crop_album_settings"
+        private const val KEY_PAGE_SIZE = "page_size"
+        const val DEFAULT_PAGE_SIZE = 1000
+        const val MIN_PAGE_SIZE = 1
+        const val MAX_PAGE_SIZE = 10000
         private const val KEY_EXPANSION_RATIO = "expansion_ratio"
 
         // 默认值：裁剪框在人物检测框外统一扩展的比例
@@ -27,6 +31,14 @@ class SettingsManager private constructor(context: Context) {
                 instance ?: SettingsManager(context).also { instance = it }
             }
         }
+    }
+
+    fun getPageSize(): Int = sharedPreferences.getInt(KEY_PAGE_SIZE, DEFAULT_PAGE_SIZE)
+        .coerceIn(MIN_PAGE_SIZE, MAX_PAGE_SIZE)
+
+    fun setPageSize(size: Int) {
+        require(size in MIN_PAGE_SIZE..MAX_PAGE_SIZE)
+        sharedPreferences.edit().putInt(KEY_PAGE_SIZE, size).apply()
     }
 
     /**

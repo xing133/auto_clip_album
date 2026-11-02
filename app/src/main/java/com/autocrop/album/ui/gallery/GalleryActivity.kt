@@ -19,6 +19,11 @@ import com.autocrop.album.databinding.ActivityGalleryBinding
 import com.autocrop.album.ui.common.PermissionHelper
 import com.autocrop.album.ui.editor.EditorActivity
 import com.autocrop.album.ui.settings.SettingsActivity
+import android.os.Parcelable
+import com.autocrop.album.data.SettingsManager
+import com.autocrop.album.ui.common.showNumberInputDialog
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -37,6 +42,18 @@ class GalleryActivity : AppCompatActivity() {
     private var currentFolder: String? = null
     private var availableFolders: List<String> = emptyList()
 
+    private var currentPage = 0
+    private var pageCount = 0
+    private var totalCount = 0
+    private var pageSize = SettingsManager.DEFAULT_PAGE_SIZE
+    private var isLoading = false
+    private var loadJob: Job? = null
+    private var loadVersion = 0
+    private var restoredState: Parcelable? = null
+    private var restoredFolder = false
+    private var requestedPage = 0
+    private lateinit var settingsLauncher: ActivityResultLauncher<Intent>
+
     private lateinit var permissionLauncher: ActivityResultLauncher<Array<String>>
     private lateinit var editorLauncher: ActivityResultLauncher<Intent>
 
@@ -46,7 +63,7 @@ class GalleryActivity : AppCompatActivity() {
         ) { permissions ->
             if (permissions.all { it.value }) {
                 // 所有权限已授权
-                loadImages()
+                loadInitialImages()
             } else {
                 // 权限被拒绝
                 if (!PermissionHelper.shouldShowRationale(this)) {
@@ -79,18 +96,7 @@ class GalleryActivity : AppCompatActivity() {
                         android.util.Log.e("GalleryActivity", "Error clearing cache", e)
                     }
 
-                    // 重新查询列表以获取最新的 MediaStore 数据
-                    val newImageList = repository.queryImages(currentSortOrder, currentFolder)
-
-                    if (newImageList != imageList) {
-                        imageList = newImageList
-                        // 清除 RecyclerView 的缓存池，避免删除文件后出现错位
-                        // 特别是网格布局（3列），缓存的 ViewHolder 可能持有旧的图片引用
-                        binding.recyclerView.recycledViewPool.clear()
-                        // 使用 submitList，DiffUtil 会智能保持滚动位置
-                        // 不手动调用 scrollToPosition，让 RecyclerView 自然保持状态
-                        adapter.submitList(imageList)
-                    }
+                    loadImages(currentPage, preserveScroll = true)
                 }
             }
             // 如果 resultCode != RESULT_OK，说明没有修改，Gallery 自然保持原状态
@@ -107,8 +113,28 @@ class GalleryActivity : AppCompatActivity() {
         initPermissionLauncher()
         initEditorLauncher()
         repository = MediaStoreRepository(this)
+        pageSize = SettingsManager.getInstance(this).getPageSize()
+        if (savedInstanceState != null) {
+            currentPage = savedInstanceState.getInt("page")
+            currentFolder = savedInstanceState.getString("folder")
+            restoredFolder = true
+            currentSortOrder = ImageItem.Companion.SortOrder.values()
+                .getOrElse(savedInstanceState.getInt("sort")) { ImageItem.Companion.SortOrder.NAME_DESC }
+            restoredState = savedInstanceState.getParcelable("grid")
+        }
         setupRecyclerView()
         setupFolderSelector()
+        setupPaging()
+        settingsLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+            val newSize = SettingsManager.getInstance(this).getPageSize()
+            if (newSize != pageSize) {
+                val manager = binding.recyclerView.layoutManager as GridLayoutManager
+                val first = manager.findFirstVisibleItemPosition().coerceAtLeast(0)
+                val absolute = currentPage.toLong() * pageSize + first
+                pageSize = newSize
+                loadImages((absolute / newSize).toInt(), anchor = (absolute % newSize).toInt())
+            }
+        }
 
         // 检查权限并加载（会自动查找 Screenshots 目录）
         checkPermissionsAndLoad()
@@ -131,34 +157,63 @@ class GalleryActivity : AppCompatActivity() {
     }
 
     private fun checkPermissionsAndLoad() {
+        if (PermissionHelper.hasPermissions(this)) {
+            loadInitialImages()
+        } else {
+            PermissionHelper.requestPermissions(permissionLauncher)
+        }
+    }
+
+    private fun loadInitialImages() {
+        binding.progressBar.visibility = View.VISIBLE
         lifecycleScope.launch {
-            // 先查找 Screenshots 目录
             try {
                 availableFolders = repository.queryFolders()
-                currentFolder = availableFolders.firstOrNull { folder ->
-                    folder.contains("Screenshots", ignoreCase = true) ||
-                    folder.contains("截屏", ignoreCase = true) ||
-                    folder.contains("ScreenRecords", ignoreCase = true) ||
-                    folder.contains("录屏", ignoreCase = true)
+                if (!restoredFolder) {
+                    currentFolder = availableFolders.firstOrNull { folder ->
+                        folder.contains("Screenshots", ignoreCase = true) ||
+                            folder.contains("截屏", ignoreCase = true) ||
+                            folder.contains("ScreenRecords", ignoreCase = true) ||
+                            folder.contains("录屏", ignoreCase = true)
+                    }
                 }
                 updateTitle(currentFolder)
+                loadImages(currentPage)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                e.printStackTrace()
-            }
-
-            // 然后加载图片
-            if (PermissionHelper.hasPermissions(this@GalleryActivity)) {
-                loadImages()
-            } else {
-                if (PermissionHelper.shouldShowRationale(this@GalleryActivity)) {
-                    PermissionHelper.showRationaleDialog(this@GalleryActivity) {
-                        PermissionHelper.requestPermissions(permissionLauncher)
-                    }
-                } else {
-                    PermissionHelper.requestPermissions(permissionLauncher)
-                }
+                binding.progressBar.visibility = View.GONE
+                binding.emptyView.visibility = View.VISIBLE
+                binding.emptyView.text = getString(R.string.gallery_load_failed)
             }
         }
+    }
+
+    private fun setupPaging() {
+        binding.btnPreviousPage.setOnClickListener { loadImages(currentPage - 1) }
+        binding.btnNextPage.setOnClickListener { loadImages(currentPage + 1) }
+        binding.btnPageNumber.setOnClickListener {
+            if (pageCount > 0) showNumberInputDialog(this, getString(R.string.jump_to_page),
+                currentPage + 1, 1, pageCount) { page ->
+                if (page - 1 != currentPage) loadImages(page - 1)
+            }
+        }
+        binding.emptyView.setOnClickListener {
+            if (!isLoading) {
+                if (availableFolders.isEmpty()) loadInitialImages() else loadImages(requestedPage)
+            }
+        }
+        updatePaging()
+    }
+
+    private fun updatePaging() {
+        binding.btnPreviousPage.isEnabled = !isLoading && currentPage > 0 && pageCount > 0
+        binding.btnNextPage.isEnabled = !isLoading && currentPage + 1 < pageCount
+        binding.btnPageNumber.isEnabled = !isLoading && pageCount > 0
+        binding.btnPageNumber.text = getString(R.string.page_number, if (pageCount == 0) 0 else currentPage + 1, pageCount)
+        val start = if (totalCount == 0) 0 else currentPage * pageSize + 1
+        val end = minOf(currentPage.toLong() * pageSize + imageList.size, totalCount.toLong()).toInt()
+        binding.pageRange.text = getString(R.string.page_range, start, end, totalCount)
     }
 
     private fun setupFolderSelector() {
@@ -191,38 +246,69 @@ class GalleryActivity : AppCompatActivity() {
         }
     }
 
-    private fun loadImages() {
-        // 只在没有数据时显示进度条，避免闪烁
-        if (imageList.isEmpty()) {
-            binding.progressBar.visibility = View.VISIBLE
-            binding.recyclerView.visibility = View.GONE
-            binding.emptyView.visibility = View.GONE
-        }
-
-        lifecycleScope.launch {
+    private fun loadImages(page: Int = 0, preserveScroll: Boolean = false, anchor: Int = 0) {
+        loadJob?.cancel()
+        val version = ++loadVersion
+        requestedPage = page
+        val scrollState = if (preserveScroll) binding.recyclerView.layoutManager?.onSaveInstanceState() else restoredState
+        restoredState = null
+        val sort = currentSortOrder
+        val folder = currentFolder
+        val size = pageSize
+        isLoading = true
+        binding.progressBar.visibility = View.VISIBLE
+        binding.emptyView.visibility = View.GONE
+        updatePaging()
+        loadJob = lifecycleScope.launch {
             try {
-                imageList = repository.queryImages(currentSortOrder, currentFolder)
-
-                if (imageList.isEmpty()) {
-                    binding.emptyView.visibility = View.VISIBLE
-                    binding.recyclerView.visibility = View.GONE
-                } else {
-                    binding.recyclerView.visibility = View.VISIBLE
-                    binding.emptyView.visibility = View.GONE
-                    adapter.submitList(imageList)
+                val result = repository.queryImagePage(sort, folder, page, size)
+                if (version != loadVersion) return@launch
+                currentPage = result.window.pageIndex
+                pageCount = result.window.pageCount
+                totalCount = result.window.totalCount
+                imageList = result.images
+                binding.recyclerView.recycledViewPool.clear()
+                adapter.submitList(imageList) {
+                    if (version == loadVersion) {
+                        val manager = binding.recyclerView.layoutManager as GridLayoutManager
+                        if (scrollState != null && currentPage == page) manager.onRestoreInstanceState(scrollState)
+                        else manager.scrollToPositionWithOffset(anchor.coerceAtMost((imageList.size - 1).coerceAtLeast(0)), 0)
+                        binding.recyclerView.visibility = if (imageList.isEmpty()) View.GONE else View.VISIBLE
+                        binding.fastScroller.visibility = if (imageList.isEmpty()) View.GONE else View.VISIBLE
+                        binding.emptyView.text = getString(R.string.no_images_found)
+                        binding.emptyView.visibility = if (imageList.isEmpty()) View.VISIBLE else View.GONE
+                        isLoading = false
+                        binding.progressBar.visibility = View.GONE
+                        updatePaging()
+                    }
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                e.printStackTrace()
-                binding.emptyView.visibility = View.VISIBLE
-                binding.recyclerView.visibility = View.GONE
-                binding.emptyView.text = getString(R.string.error_occurred)
-            } finally {
-                binding.progressBar.visibility = View.GONE
+                if (version == loadVersion) {
+                    android.util.Log.e("GalleryActivity", "Error loading page", e)
+                    binding.recyclerView.visibility = View.GONE
+                    binding.fastScroller.visibility = View.GONE
+                    binding.emptyView.visibility = View.VISIBLE
+                    binding.emptyView.text = getString(R.string.gallery_load_failed)
+                    isLoading = false
+                    binding.progressBar.visibility = View.GONE
+                    updatePaging()
+                }
             }
         }
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putInt("page", currentPage)
+        outState.putString("folder", currentFolder)
+        outState.putInt("sort", currentSortOrder.ordinal)
+        outState.putParcelable("grid", binding.recyclerView.layoutManager?.onSaveInstanceState())
+    }
+
     private fun openEditor(position: Int) {
+        if (isLoading || position !in imageList.indices) return
         // 使用 ImageDataHolder 共享数据，避免通过 Intent 传递大量数据
         ImageDataHolder.setImageUris(imageList.map { it.uri })
 
@@ -272,7 +358,7 @@ class GalleryActivity : AppCompatActivity() {
 
     private fun openSettings() {
         val intent = Intent(this, SettingsActivity::class.java)
-        startActivity(intent)
+        settingsLauncher.launch(intent)
     }
 
     private fun updateTitle(folderPath: String?) {
