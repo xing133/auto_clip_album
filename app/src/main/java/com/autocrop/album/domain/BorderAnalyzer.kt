@@ -2,11 +2,36 @@ package com.autocrop.album.domain
 
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.min
 
-/** Pixel-only border analysis: independent of Android, so detection can be regression tested. */
+/**
+ * Pixel-only border analysis: independent of Android, so detection can be regression tested.
+ *
+ * A border is accepted only when all three hold:
+ *  1. an edge runs across the image at the proposed depth (a real, straight boundary),
+ *  2. everything outside it is neutral padding (black/grey/white, sparse UI allowed),
+ *  3. the strip just inside it carries real picture detail (many colours).
+ * The innermost accepted edge wins, so stacked padding (e.g. navigation bar + control bar)
+ * is removed as one block instead of stopping at the first inner divider.
+ */
 internal object BorderAnalyzer {
-    private const val BACKGROUND_TOLERANCE = 12
+    /** Neutral padding is black, grey or white; a saturated strip is content, e.g. sky. */
+    private const val NEUTRAL_TOLERANCE = 18
     private const val MAX_BORDER_RATIO = 0.4f
+    /** Ignore side-mounted controls when judging a horizontal band. */
+    private const val EDGE_INSET_RATIO = 0.15f
+
+    /** Pixels this far apart mean the boundary really changes colour. */
+    private const val JUMP_DISTANCE = 12
+    /** An edge only counts when it spans the image, not when it is a local detail. */
+    private const val MIN_JUMP_FRACTION = 0.25f
+    private const val MIN_MEAN_JUMP = 18f
+    /** Neutral share of the whole outer region, sparse icons included. */
+    private const val MIN_OUTSIDE_NEUTRAL = 0.90f
+    /** Real content carries many colours; toolbars and navigation bars do not. */
+    private const val MIN_INSIDE_COLORS = 12
+    private const val INSIDE_SUPPORT_RATIO = 0.06f
+    private const val MIN_TRIM_RATIO = 0.008f
 
     data class Insets(val top: Int = 0, val bottom: Int = 0, val left: Int = 0, val right: Int = 0)
 
@@ -24,80 +49,90 @@ internal object BorderAnalyzer {
     private fun red(pixel: Int) = pixel ushr 16 and 255
     private fun green(pixel: Int) = pixel ushr 8 and 255
     private fun blue(pixel: Int) = pixel and 255
-    private fun distance(a: Int, b: Int) = maxOf(abs(red(a) - red(b)), abs(green(a) - green(b)), abs(blue(a) - blue(b)))
+
+    private fun distance(a: Int, b: Int) =
+        maxOf(abs(red(a) - red(b)), abs(green(a) - green(b)), abs(blue(a) - blue(b)))
+
+    private fun isNeutral(pixel: Int): Boolean {
+        val r = red(pixel)
+        val g = green(pixel)
+        val b = blue(pixel)
+        return maxOf(r, g, b) - minOf(r, g, b) <= NEUTRAL_TOLERANCE
+    }
 
     private fun scan(pixels: IntArray, width: Int, height: Int, horizontal: Boolean, reverse: Boolean): Int {
         val depth = if (horizontal) height else width
         val span = if (horizontal) width else height
-        // Exclude corners and side-mounted controls when judging a horizontal/vertical band.
-        val start = (span * 0.15f).toInt()
-        val end = span - start
-        fun pixel(d: Int, p: Int): Int {
+        val inset = (span * EDGE_INSET_RATIO).toInt()
+        val start = inset
+        val end = span - inset
+        val sample = end - start
+        if (sample < 8) return 0
+
+        fun at(d: Int, p: Int): Int {
             val position = if (reverse) depth - d - 1 else d
             return if (horizontal) pixels[position * width + p] else pixels[p * width + position]
         }
 
-        // A quantized mode resists text/icons; averaging the strip would mix UI into the background.
-        val histogram = IntArray(4096)
-        val seedDepth = max(2, (depth * 0.025f).toInt())
-        for (d in 0 until seedDepth) for (p in start until end) {
-            val c = pixel(d, p)
-            histogram[(red(c) shr 4 shl 8) or (green(c) shr 4 shl 4) or (blue(c) shr 4)]++
-        }
-        val bin = histogram.indices.maxByOrNull { histogram[it] } ?: return 0
-        var r = 0L
-        var g = 0L
-        var b = 0L
-        var count = 0
-        for (d in 0 until seedDepth) for (p in start until end) {
-            val c = pixel(d, p)
-            val key = (red(c) shr 4 shl 8) or (green(c) shr 4 shl 4) or (blue(c) shr 4)
-            if (key == bin) {
-                r += red(c); g += green(c); b += blue(c); count++
-            }
-        }
-        if (count == 0) return 0
-        val background = ((r / count).toInt() shl 16) or ((g / count).toInt() shl 8) or (b / count).toInt()
-        // Deliberately limit this path to neutral UI backgrounds, rather than treating foliage/sky as padding.
-        if (maxOf(red(background), green(background), blue(background)) -
-            minOf(red(background), green(background), blue(background)) > 18) return 0
+        val maxTrim = (depth * MAX_BORDER_RATIO).toInt().coerceAtLeast(2)
+        val support = max(6, (depth * INSIDE_SUPPORT_RATIO).toInt())
+        val scanDepth = min(depth, maxTrim + support + 2)
 
-        val maxTrim = (depth * MAX_BORDER_RATIO).toInt()
-        val support = max(6, (depth * 0.08f).toInt())
-        val analysisDepth = minOf(depth, maxTrim + support + 3)
-        val fraction = FloatArray(analysisDepth)
-        val prefix = FloatArray(analysisDepth + 1)
-        for (d in 0 until analysisDepth) {
-            var matching = 0
-            for (p in start until end) if (distance(pixel(d, p), background) <= BACKGROUND_TOLERANCE) matching++
-            fraction[d] = matching.toFloat() / (end - start)
-            prefix[d + 1] = prefix[d] + fraction[d]
-        }
-        if (prefix[seedDepth] / seedDepth < 0.60f) return 0
+        val jumpFraction = FloatArray(scanDepth)
+        val meanJump = FloatArray(scanDepth)
+        val neutralFraction = FloatArray(scanDepth)
+        val colorCount = IntArray(scanDepth)
+        val seen = IntArray(4096)
 
-        val minTrim = max(3, (depth * 0.02f).toInt())
-        var boundary = 0
-        for (d in minTrim..maxTrim) {
-            // Most of the proposed outer region must still be the background, with room for UI islands.
-            if (prefix[d] / d < 0.65f || fraction[d] > 0.80f) continue
-            val before = max(0, d - 3)
-            val outsideMean = (prefix[d] - prefix[before]) / (d - before)
-            if (outsideMean < 0.65f || outsideMean - fraction[d] < 0.10f) continue
-            val insideEnd = minOf(analysisDepth, d + support)
-            val insideMean = (prefix[insideEnd] - prefix[d]) / (insideEnd - d)
-            if (insideMean > 0.55f) continue
-            var contentRows = 0
-            for (i in d until insideEnd) if (fraction[i] <= 0.62f) contentRows++
-            if (contentRows.toFloat() / (insideEnd - d) < 0.70f) continue
-            // Require an actual sharp transition: a gradual grey gradient is not a border.
-            var changed = 0
+        for (d in 0 until scanDepth) {
+            seen.fill(0)
+            var distinct = 0
+            var neutral = 0
             for (p in start until end) {
-                if (distance(pixel(before, p), pixel(minOf(d + 1, analysisDepth - 1), p)) >= 12) changed++
+                val c = at(d, p)
+                if (isNeutral(c)) neutral++
+                val key = (red(c) shr 4 shl 8) or (green(c) shr 4 shl 4) or (blue(c) shr 4)
+                if (seen[key] == 0) {
+                    seen[key] = 1
+                    distinct++
+                }
             }
-            if (changed.toFloat() / (end - start) < 0.25f) continue
-            // A later transition can be the photo after a toolbar or reply box in the margin.
-            if (boundary == 0 || d - boundary > 3) boundary = d
+            colorCount[d] = distinct
+            neutralFraction[d] = neutral.toFloat() / sample
         }
-        return boundary
+
+        for (d in 1 until scanDepth) {
+            var jumped = 0
+            var total = 0
+            for (p in start until end) {
+                val delta = distance(at(d, p), at(d - 1, p))
+                total += delta
+                if (delta >= JUMP_DISTANCE) jumped++
+            }
+            jumpFraction[d] = jumped.toFloat() / sample
+            meanJump[d] = total.toFloat() / sample
+        }
+
+        val neutralPrefix = DoubleArray(scanDepth + 1)
+        for (d in 0 until scanDepth) neutralPrefix[d + 1] = neutralPrefix[d] + neutralFraction[d]
+
+        val minTrim = max(2, (depth * MIN_TRIM_RATIO).toInt())
+        val lastTrim = min(maxTrim, scanDepth - 1)
+        for (d in minTrim..lastTrim) {
+            if (jumpFraction[d] < MIN_JUMP_FRACTION || meanJump[d] < MIN_MEAN_JUMP) continue
+            if (neutralPrefix[d + 1] / (d + 1) < MIN_OUTSIDE_NEUTRAL) continue
+            val insideEnd = min(scanDepth, d + support)
+            if (insideEnd - d < 3) continue
+            val colors = IntArray(insideEnd - d) { colorCount[d + it] }
+            colors.sort()
+            if (colors[colors.size / 2] < MIN_INSIDE_COLORS) continue
+            // First edge that starts real content; snap to the sharpest row nearby (scaled bitmaps blur it).
+            var boundary = d
+            for (k in max(minTrim, d - 1)..min(lastTrim, d + 1)) {
+                if (meanJump[k] > meanJump[boundary]) boundary = k
+            }
+            return boundary
+        }
+        return 0
     }
 }

@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Rect
 import android.util.Log
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
@@ -70,6 +71,11 @@ object LetterboxDetector {
      * 单个像素被判定为边缘的最小梯度值
      */
     private const val EDGE_GRADIENT_THRESHOLD = 40f
+
+    /**
+     * 亮度裁剪必须落在一条真实边界上：暗色画面与黑边亮度相同，但没有分界线
+     */
+    private const val SHARP_EDGE_MIN_DELTA = 12f
 
     /**
      * 检测结果数据类
@@ -190,15 +196,26 @@ object LetterboxDetector {
             analysisBitmap.recycle()
         }
 
+        // A brightness trim is only real when a sharp edge sits there: dark stage content has the
+        // same low luminance as a black bar, but no boundary separates it from the picture.
+        val brightnessTop = verifiedBrightnessRatio(luma, analysisBitmap.width, analysisBitmap.height,
+            brightnessResult.trimmedRatios.top, Direction.TOP)
+        val brightnessBottom = verifiedBrightnessRatio(luma, analysisBitmap.width, analysisBitmap.height,
+            brightnessResult.trimmedRatios.bottom, Direction.BOTTOM)
+        val brightnessLeft = verifiedBrightnessRatio(luma, analysisBitmap.width, analysisBitmap.height,
+            brightnessResult.trimmedRatios.left, Direction.LEFT)
+        val brightnessRight = verifiedBrightnessRatio(luma, analysisBitmap.width, analysisBitmap.height,
+            brightnessResult.trimmedRatios.right, Direction.RIGHT)
+
         // Prefer a verified colour-background boundary; preserve legacy black-border fallback.
         val combinedTop = if (border.top > 0) border.top.toFloat() / analysisBitmap.height
-            else max(brightnessResult.trimmedRatios.top, edgeResult.trimmedRatios.top)
+            else max(brightnessTop, edgeResult.trimmedRatios.top)
         val combinedBottom = if (border.bottom > 0) border.bottom.toFloat() / analysisBitmap.height
-            else max(brightnessResult.trimmedRatios.bottom, edgeResult.trimmedRatios.bottom)
+            else max(brightnessBottom, edgeResult.trimmedRatios.bottom)
         val combinedLeft = if (border.left > 0) border.left.toFloat() / analysisBitmap.width
-            else max(brightnessResult.trimmedRatios.left, edgeResult.trimmedRatios.left)
+            else max(brightnessLeft, edgeResult.trimmedRatios.left)
         val combinedRight = if (border.right > 0) border.right.toFloat() / analysisBitmap.width
-            else max(brightnessResult.trimmedRatios.right, edgeResult.trimmedRatios.right)
+            else max(brightnessRight, edgeResult.trimmedRatios.right)
 
         // 计算最终边界
         val finalBounds = Rect(
@@ -564,6 +581,48 @@ object LetterboxDetector {
         }
 
         return 0
+    }
+
+    /**
+     * A brightness trim is only trusted when a sharp edge actually sits at that position.
+     * Otherwise dark picture content (a night stage, a shadowed wall) would be cut as a bar.
+     */
+    private fun verifiedBrightnessRatio(
+        luma: FloatArray,
+        width: Int,
+        height: Int,
+        ratio: Float,
+        direction: Direction
+    ): Float = if (ratio > 0f && hasSharpEdge(luma, width, height, direction, ratio)) ratio else 0f
+
+    private fun hasSharpEdge(
+        luma: FloatArray,
+        width: Int,
+        height: Int,
+        direction: Direction,
+        ratio: Float
+    ): Boolean {
+        val horizontal = direction == Direction.TOP || direction == Direction.BOTTOM
+        val limit = if (horizontal) height else width
+        val trim = (limit * ratio).roundToInt()
+        val boundary = when (direction) {
+            Direction.TOP, Direction.LEFT -> trim
+            Direction.BOTTOM, Direction.RIGHT -> limit - trim
+        }
+        var best = 0f
+        for (line in max(1, boundary - 2)..minOf(limit - 1, boundary + 2)) {
+            val delta = if (horizontal) {
+                var sum = 0f
+                for (x in 0 until width) sum += abs(luma[line * width + x] - luma[(line - 1) * width + x])
+                sum / width
+            } else {
+                var sum = 0f
+                for (y in 0 until height) sum += abs(luma[y * width + line] - luma[y * width + line - 1])
+                sum / height
+            }
+            if (delta > best) best = delta
+        }
+        return best >= SHARP_EDGE_MIN_DELTA
     }
 
     /**
