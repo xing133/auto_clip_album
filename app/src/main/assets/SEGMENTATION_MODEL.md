@@ -18,7 +18,7 @@ Download URLs are https://storage.googleapis.com/mediapipe-models/{version}/{ass
 - The arrow menu remembers the model selection. Switching while masks are displayed reruns inference on the current viewport and clears the previous masks.
 - All use MediaPipe Tasks Vision 0.10.9 CPU. Each task owns a copy of the bitmap because closing an MPImage recycles its wrapped bitmap in that SDK version.
 - Mask bounds are mapped back to preview coordinates; the save path converts them to original image coordinates.
-- Selected seg crops add configurable margin on all four sides: by default 2% of the region bounding box's long side per edge. Settings offers 0-20% in 1% steps, independently of person-detector expansion. Padding and the 20:9 aspect limit are constrained to the intersection of the current viewport and detected non-border content. Seg crops retain this content boundary during dragging, resizing, zoom and save; a selection entirely in a detected border produces no crop.
+- Selected seg crops add configurable margin on all four sides: by default 2% of the region bounding box's long side per edge. Settings offers 0-20% in 1% steps, independently of person-detector expansion. Padding and the shared configurable x:9 aspect limit (default 20:9) are constrained to the intersection of the current viewport and detected non-border content. Seg crops retain this content boundary during dragging, resizing, zoom and save; a selection entirely in a detected border produces no crop.
 
 Actual same-image Android comparison artifacts, if available locally: build/reports/segmentation-comparison/android/.
 
@@ -37,3 +37,5 @@ Source: https://storage.googleapis.com/mediapipe-models/interactive_segmenter/ma
 - Mosaic block size is saved immediately to app settings and restored when the editor opens, including after process restart.
 - JPEG/PNG/WebP overwrite uses the actual source encoding (JPEG quality 100; lossless PNG/WebP where supported), rather than writing PNG data under another extension. Other formats offer the PNG copy path. JPEG recompression can affect pixels outside the mask.
 - Save copy creates a new full-resolution PNG in `Pictures/AutoCropAlbum`; unselected decoded pixels stay unchanged and the source is unchanged. A selected foreground is not guaranteed to correspond to exactly one person, so inspect the green mask and mosaic preview before saving.
+
+All crop sources use the same configurable aspect policy, including letterbox detection, person detection, segmentation and manual boxes. Export reapplies it after preview-to-original scaling and integer rounding, within the same content/window bounds. The numerator is saved in Settings (integer 9-1000); the denominator stays 9.

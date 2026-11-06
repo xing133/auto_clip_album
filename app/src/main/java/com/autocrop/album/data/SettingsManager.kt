@@ -14,6 +14,10 @@ class SettingsManager private constructor(context: Context) {
 
     companion object {
         private const val PREFS_NAME = "auto_crop_album_settings"
+        private const val KEY_CROP_ASPECT_NUMERATOR = "crop_aspect_numerator"
+        const val DEFAULT_CROP_ASPECT_NUMERATOR = com.autocrop.album.domain.CropAspectRatio.DEFAULT_NUMERATOR
+        const val MIN_CROP_ASPECT_NUMERATOR = com.autocrop.album.domain.CropAspectRatio.MIN_NUMERATOR
+        const val MAX_CROP_ASPECT_NUMERATOR = com.autocrop.album.domain.CropAspectRatio.MAX_NUMERATOR
         private const val KEY_SEGMENTATION_MODEL = "segmentation_model"
         private const val KEY_SEGMENTATION_CROP_PADDING = "segmentation_crop_padding_percent"
         const val DEFAULT_SEGMENTATION_CROP_PADDING = 2
@@ -42,6 +46,14 @@ class SettingsManager private constructor(context: Context) {
                 instance ?: SettingsManager(context).also { instance = it }
             }
         }
+    }
+
+    fun getCropAspectNumerator(): Int = sharedPreferences.getInt(KEY_CROP_ASPECT_NUMERATOR, DEFAULT_CROP_ASPECT_NUMERATOR)
+        .coerceIn(MIN_CROP_ASPECT_NUMERATOR, MAX_CROP_ASPECT_NUMERATOR)
+
+    fun setCropAspectNumerator(numerator: Int) {
+        require(numerator in MIN_CROP_ASPECT_NUMERATOR..MAX_CROP_ASPECT_NUMERATOR)
+        sharedPreferences.edit().putInt(KEY_CROP_ASPECT_NUMERATOR, numerator).apply()
     }
 
     fun getSegmentationModel(): SegmentationModel = SegmentationModel.fromKey(

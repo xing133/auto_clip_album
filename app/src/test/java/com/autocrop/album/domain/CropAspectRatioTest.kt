@@ -74,4 +74,49 @@ class CropAspectRatioTest {
             valid(CropAspectRatio.fit(box, window), window)
         }
     }
+
+    @Test fun configurableLimitAppliesToPortraitLandscapeAndSquare() {
+        for (numerator in listOf(9, 12, 16, 20, 30, 1000)) {
+            for (source in listOf(CropAspectRatio.Box(490f, 100f, 510f, 900f),
+                CropAspectRatio.Box(100f, 490f, 900f, 510f))) {
+                val result = CropAspectRatio.fit(source, bounds, numerator)
+                val w = result.right - result.left
+                val h = result.bottom - result.top
+                assertTrue(maxOf(w / h, h / w) <= numerator / 9f + .0001f)
+                if (numerator == 9) assertEquals(w, h, .0001f)
+            }
+        }
+    }
+
+    @Test fun looserLimitDoesNotRetainTheOldTwentyToNineRestriction() {
+        val source = CropAspectRatio.Box(100f, 400f, 900f, 600f)
+        assertEquals(source, CropAspectRatio.fit(source, bounds, 36))
+        assertTrue(CropAspectRatio.fit(source, bounds, 20) != source)
+    }
+
+    @Test fun integerExportCorrectsRoundingAndStaysInsideFractionalContentBounds() {
+        val random = Random(9)
+        for (numerator in listOf(9, 12, 16, 20, 36, 1000)) repeat(300) {
+            val available = CropAspectRatio.Box(10.2f, 20.8f, 11.7f + random.nextFloat() * 900,
+                22.5f + random.nextFloat() * 900)
+            val source = CropAspectRatio.Box(-20f, 0f, 1200f * random.nextFloat(), 1200f * random.nextFloat())
+            val result = CropAspectRatio.fitPixels(source, available, numerator)!!
+            assertTrue(result.width > 0 && result.height > 0)
+            assertTrue(result.left >= kotlin.math.ceil(available.left))
+            assertTrue(result.top >= kotlin.math.ceil(available.top))
+            assertTrue(result.right <= kotlin.math.floor(available.right))
+            assertTrue(result.bottom <= kotlin.math.floor(available.bottom))
+            assertTrue(result.width.toLong() * 9 <= result.height.toLong() * numerator)
+            assertTrue(result.height.toLong() * 9 <= result.width.toLong() * numerator)
+        }
+    }
+
+    @Test fun boundsWithoutOneWholePixelCannotProduceAnExport() {
+        assertNull(CropAspectRatio.fitPixels(bounds, CropAspectRatio.Box(.2f, .2f, .8f, 100f), 9))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun numeratorBelowNineCannotRepresentALongToShortLimit() {
+        CropAspectRatio.fit(bounds, bounds, 8)
+    }
 }

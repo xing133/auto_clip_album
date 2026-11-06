@@ -4,7 +4,6 @@ import android.graphics.RectF
 import com.autocrop.album.data.models.CropBox
 import com.autocrop.album.data.models.DetectedPerson
 import kotlin.math.max
-import kotlin.math.min
 
 /**
  * 裁剪框计算器
@@ -22,18 +21,6 @@ object CropCalculator {
     const val DEFAULT_EXPANSION_RATIO = 0.08f
 
     /**
-     * 最小宽高比（宽/高）：防止竖图过于细长
-     * 9:20 表示：如果宽度 < 高度*(9/20)，则扩展宽度
-     */
-    private const val MIN_ASPECT_RATIO = 9f / 20f  // 9:20 = 0.45
-
-    /**
-     * 最大宽高比（宽/高）：防止横图过于扁平
-     * 20:9 表示：如果宽度 > 高度*(20/9)，则扩展高度
-     */
-    private const val MAX_ASPECT_RATIO = 20f / 9f  // 20:9 ≈ 2.222
-
-    /**
      * 为检测到的人物生成裁剪框
      * @param persons 检测到的人物列表
      * @param imageWidth 图片宽度
@@ -47,16 +34,18 @@ object CropCalculator {
         imageWidth: Int,
         imageHeight: Int,
         letterboxResult: LetterboxDetector.DetectionResult? = null,
-        expansionRatio: Float = DEFAULT_EXPANSION_RATIO
+        expansionRatio: Float = DEFAULT_EXPANSION_RATIO,
+        maxAspectNumerator: Int
     ): List<CropBox> {
         return persons.mapIndexed { index, person ->
-            val rect = calculateCropRect(person, imageWidth, imageHeight, letterboxResult, expansionRatio)
+            val rect = calculateCropRect(person, imageWidth, imageHeight, letterboxResult, expansionRatio, maxAspectNumerator)
             CropBox(
                 id = index,
                 rect = rect,
                 personId = person.personId,
                 isSelected = index == 0,  // 默认选中第一个
-                confidence = person.confidence
+                confidence = person.confidence,
+                contentBounds = letterboxResult?.bounds?.let { RectF(it) }
             )
         }
     }
@@ -69,9 +58,10 @@ object CropCalculator {
         imageWidth: Int,
         imageHeight: Int,
         letterboxResult: LetterboxDetector.DetectionResult? = null,
-        expansionRatio: Float = DEFAULT_EXPANSION_RATIO
+        expansionRatio: Float = DEFAULT_EXPANSION_RATIO,
+        maxAspectNumerator: Int
     ): RectF {
-        var rect = RectF(person.boundingBox)
+        val rect = RectF(person.boundingBox)
 
         // 1. 统一外扩：四边各扩展 检测框长边 × expansionRatio
         val padding = max(rect.width(), rect.height()) * expansionRatio
@@ -80,189 +70,18 @@ object CropCalculator {
         rect.right += padding
         rect.bottom += padding
 
-        // 2. 检查并修正宽高比
-        rect = adjustAspectRatio(rect)
-
-        // 3. 确保不超出图片边界
-        rect = constrainToImageBounds(rect, imageWidth, imageHeight)
-
-        // 4. 确保不包含黑边区域
-        if (letterboxResult != null) {
-            rect = avoidLetterboxRegions(rect, letterboxResult, imageWidth, imageHeight)
-        }
-
-        val available = letterboxResult?.trimmedRatios?.let { ratios ->
-            RectF(imageWidth * ratios.left, imageHeight * ratios.top,
-                imageWidth * (1f - ratios.right), imageHeight * (1f - ratios.bottom))
-        } ?: RectF(0f, 0f, imageWidth.toFloat(), imageHeight.toFloat())
-        return constrainCropAspect(rect, available)
+        val available = letterboxResult?.bounds?.let { RectF(it) }
+            ?: RectF(0f, 0f, imageWidth.toFloat(), imageHeight.toFloat())
+        return constrainCropAspect(rect, available, maxAspectNumerator)
     }
 
     /** Shared final constraint for generated, manually edited and viewport-clipped crop boxes. */
-    fun constrainCropAspect(rect: RectF, bounds: RectF): RectF {
-        if (bounds.isEmpty) return RectF(rect)
+    fun constrainCropAspect(rect: RectF, bounds: RectF, maxAspectNumerator: Int): RectF {
+        if (bounds.isEmpty) return RectF()
         val result = CropAspectRatio.fit(
             CropAspectRatio.Box(rect.left, rect.top, rect.right, rect.bottom),
-            CropAspectRatio.Box(bounds.left, bounds.top, bounds.right, bounds.bottom))
+            CropAspectRatio.Box(bounds.left, bounds.top, bounds.right, bounds.bottom), maxAspectNumerator)
         return RectF(result.left, result.top, result.right, result.bottom)
-    }
-
-    /**
-     * 调整宽高比，避免细长条
-     */
-    private fun adjustAspectRatio(rect: RectF): RectF {
-        val width = rect.width()
-        val height = rect.height()
-        val ratio = width / height
-
-        return when {
-            ratio < MIN_ASPECT_RATIO -> {
-                // 太窄，扩展宽度
-                val targetWidth = height * MIN_ASPECT_RATIO
-                val widthDiff = targetWidth - width
-                RectF(
-                    rect.left - widthDiff / 2,
-                    rect.top,
-                    rect.right + widthDiff / 2,
-                    rect.bottom
-                )
-            }
-            ratio > MAX_ASPECT_RATIO -> {
-                // 太宽，扩展高度
-                val targetHeight = width / MAX_ASPECT_RATIO
-                val heightDiff = targetHeight - height
-                RectF(
-                    rect.left,
-                    rect.top - heightDiff / 2,
-                    rect.right,
-                    rect.bottom + heightDiff / 2
-                )
-            }
-            else -> rect
-        }
-    }
-
-    /**
-     * 约束到图片边界内
-     */
-    private fun constrainToImageBounds(
-        rect: RectF,
-        imageWidth: Int,
-        imageHeight: Int
-    ): RectF {
-        val result = RectF(rect)
-
-        // 如果裁剪框超出边界，进行平移或缩放
-        if (result.width() > imageWidth || result.height() > imageHeight) {
-            // 裁剪框比图片还大，缩放到图片大小
-            val scaleX = if (result.width() > imageWidth) imageWidth / result.width() else 1f
-            val scaleY = if (result.height() > imageHeight) imageHeight / result.height() else 1f
-            val scale = min(scaleX, scaleY)
-
-            val centerX = result.centerX()
-            val centerY = result.centerY()
-            val newWidth = result.width() * scale
-            val newHeight = result.height() * scale
-
-            result.set(
-                centerX - newWidth / 2,
-                centerY - newHeight / 2,
-                centerX + newWidth / 2,
-                centerY + newHeight / 2
-            )
-        }
-
-        // 平移到边界内
-        if (result.left < 0) {
-            result.offset(-result.left, 0f)
-        }
-        if (result.top < 0) {
-            result.offset(0f, -result.top)
-        }
-        if (result.right > imageWidth) {
-            result.offset(imageWidth - result.right, 0f)
-        }
-        if (result.bottom > imageHeight) {
-            result.offset(0f, imageHeight - result.bottom)
-        }
-
-        // 最终裁剪到边界
-        result.left = max(0f, result.left)
-        result.top = max(0f, result.top)
-        result.right = min(imageWidth.toFloat(), result.right)
-        result.bottom = min(imageHeight.toFloat(), result.bottom)
-
-        return result
-    }
-
-    /**
-     * 调整裁剪框以避免黑边区域
-     * 使用黑边检测结果的 trimmedRatios 来缩小裁剪框，确保不包含黑边
-     */
-    private fun avoidLetterboxRegions(
-        rect: RectF,
-        letterboxResult: LetterboxDetector.DetectionResult,
-        imageWidth: Int,
-        imageHeight: Int
-    ): RectF {
-        val ratios = letterboxResult.trimmedRatios
-
-        // 计算有效内容区域（去除黑边后的区域）
-        val contentLeft = imageWidth * ratios.left
-        val contentTop = imageHeight * ratios.top
-        val contentRight = imageWidth * (1f - ratios.right)
-        val contentBottom = imageHeight * (1f - ratios.bottom)
-
-        // 将裁剪框约束到有效内容区域内
-        val adjustedRect = RectF(rect)
-
-        // 左边：如果裁剪框左边界在黑边区域内，移动到内容区域
-        if (adjustedRect.left < contentLeft) {
-            val shift = contentLeft - adjustedRect.left
-            adjustedRect.left = contentLeft
-            // 如果可能，保持宽度不变
-            if (adjustedRect.right + shift <= contentRight) {
-                adjustedRect.right += shift
-            }
-        }
-
-        // 右边：如果裁剪框右边界在黑边区域内，移动到内容区域
-        if (adjustedRect.right > contentRight) {
-            val shift = adjustedRect.right - contentRight
-            adjustedRect.right = contentRight
-            // 如果可能，保持宽度不变
-            if (adjustedRect.left - shift >= contentLeft) {
-                adjustedRect.left -= shift
-            }
-        }
-
-        // 上边：如果裁剪框上边界在黑边区域内，移动到内容区域
-        if (adjustedRect.top < contentTop) {
-            val shift = contentTop - adjustedRect.top
-            adjustedRect.top = contentTop
-            // 如果可能，保持高度不变
-            if (adjustedRect.bottom + shift <= contentBottom) {
-                adjustedRect.bottom += shift
-            }
-        }
-
-        // 下边：如果裁剪框下边界在黑边区域内，移动到内容区域
-        if (adjustedRect.bottom > contentBottom) {
-            val shift = adjustedRect.bottom - contentBottom
-            adjustedRect.bottom = contentBottom
-            // 如果可能，保持高度不变
-            if (adjustedRect.top - shift >= contentTop) {
-                adjustedRect.top -= shift
-            }
-        }
-
-        // 确保调整后的矩形仍然有效
-        if (adjustedRect.width() <= 0 || adjustedRect.height() <= 0) {
-            // 如果调整后无效，返回整个有效内容区域
-            return RectF(contentLeft, contentTop, contentRight, contentBottom)
-        }
-
-        return adjustedRect
     }
 
     /**
@@ -277,9 +96,10 @@ object CropCalculator {
         cropBox: CropBox,
         newRect: RectF,
         imageWidth: Int,
-        imageHeight: Int
+        imageHeight: Int,
+        maxAspectNumerator: Int
     ): CropBox {
-        var adjustedRect = RectF(newRect)
+        val adjustedRect = RectF(newRect)
 
         // 确保最小尺寸
         val minSize = CropBox.MIN_SIZE_DP
@@ -290,11 +110,9 @@ object CropCalculator {
             adjustedRect.bottom = adjustedRect.top + minSize
         }
 
-        // 约束到图片边界
-        adjustedRect = constrainToImageBounds(adjustedRect, imageWidth, imageHeight)
-
-        return cropBox.copyWithRect(constrainCropAspect(adjustedRect,
-            RectF(0f, 0f, imageWidth.toFloat(), imageHeight.toFloat())))
+        val available = RectF(0f, 0f, imageWidth.toFloat(), imageHeight.toFloat())
+        if (cropBox.contentBounds?.let { !available.intersect(it) } == true) return cropBox
+        return cropBox.copyWithRect(constrainCropAspect(adjustedRect, available, maxAspectNumerator))
     }
 
     /**
@@ -303,7 +121,9 @@ object CropCalculator {
     fun createManualCropBox(
         id: Int,
         imageWidth: Int,
-        imageHeight: Int
+        imageHeight: Int,
+        maxAspectNumerator: Int,
+        contentBounds: RectF? = null
     ): CropBox {
         // 创建一个居中的裁剪框，大小为图片的50%
         val width = imageWidth * 0.5f
@@ -315,10 +135,11 @@ object CropCalculator {
 
         return CropBox(
             id = id,
-            rect = constrainCropAspect(rect, RectF(0f, 0f, imageWidth.toFloat(), imageHeight.toFloat())),
+            rect = constrainCropAspect(rect, contentBounds ?: RectF(0f, 0f, imageWidth.toFloat(), imageHeight.toFloat()), maxAspectNumerator),
             personId = null,  // 手动创建
             isSelected = true,
-            confidence = 1.0f
+            confidence = 1.0f,
+            contentBounds = contentBounds?.let { RectF(it) }
         )
     }
 }

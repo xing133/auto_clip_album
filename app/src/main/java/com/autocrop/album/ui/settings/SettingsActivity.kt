@@ -32,6 +32,14 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun setupUI() {
+        binding.btnCropAspectRatio.setOnClickListener {
+            showNumberInputDialog(this, getString(R.string.crop_aspect_title),
+                settingsManager.getCropAspectNumerator(), SettingsManager.MIN_CROP_ASPECT_NUMERATOR,
+                SettingsManager.MAX_CROP_ASPECT_NUMERATOR, suffix = ":9") { numerator ->
+                settingsManager.setCropAspectNumerator(numerator)
+                updateCropAspectRatio()
+            }
+        }
         binding.btnSegmentationCropPadding.setOnClickListener {
             showNumberInputDialog(this, getString(R.string.segmentation_crop_padding_title),
                 settingsManager.getSegmentationCropPaddingPercent(),
@@ -65,12 +73,17 @@ class SettingsActivity : AppCompatActivity() {
         binding.btnPageSize.text = getString(R.string.page_size_value, settingsManager.getPageSize())
     }
 
+    private fun updateCropAspectRatio() {
+        binding.btnCropAspectRatio.text = getString(R.string.crop_aspect_value, settingsManager.getCropAspectNumerator())
+    }
+
     private fun updateSegmentationCropPadding() {
         binding.btnSegmentationCropPadding.text = getString(R.string.segmentation_crop_padding_value,
             settingsManager.getSegmentationCropPaddingPercent())
     }
 
     private fun loadSettings() {
+        updateCropAspectRatio()
         updateSegmentationCropPadding()
         updatePageSize()
         val currentValue = settingsManager.getExpansionRatio()

@@ -661,7 +661,8 @@ class EditorActivity : AppCompatActivity() {
                     val cropBox = CropBox(
                         id = 0,
                         rect = RectF(bounds.left.toFloat(), bounds.top.toFloat(), bounds.right.toFloat(), bounds.bottom.toFloat()),
-                        isSelected = true
+                        isSelected = true,
+                        contentBounds = RectF(bounds)
                     )
                     currentCropBoxes = listOf(cropBox)
                 }
@@ -720,17 +721,23 @@ class EditorActivity : AppCompatActivity() {
                 }
                 val localBoxes = if (persons.isNotEmpty()) {
                     CropCalculator.generateCropBoxes(persons, regionBitmap.width, regionBitmap.height,
-                        borders, settingsManager.getExpansionRatio())
+                        borders, settingsManager.getExpansionRatio(), settingsManager.getCropAspectNumerator())
                 } else {
                     showStatus(getString(R.string.no_person_detected))
-                    listOf(CropCalculator.createManualCropBox(0, regionBitmap.width, regionBitmap.height))
+                    listOf(CropCalculator.createManualCropBox(0, regionBitmap.width, regionBitmap.height,
+                        settingsManager.getCropAspectNumerator(), RectF(borders.bounds)))
                 }
                 // Detection coordinates are local to the snapshot; restore preview-image coordinates.
                 val snapshotRegion = ImageViewport.Region(left.toFloat(), top.toFloat(), right.toFloat(), bottom.toFloat())
                 currentCropBoxes = localBoxes.map { box ->
                     val r = box.rect
                     val mapped = snapshotRegion.fromLocal(ImageViewport.Region(r.left, r.top, r.right, r.bottom))
+                    val mappedBounds = box.contentBounds?.let { limit ->
+                        snapshotRegion.fromLocal(ImageViewport.Region(limit.left, limit.top, limit.right, limit.bottom))
+                            .let { RectF(it.left, it.top, it.right, it.bottom) }
+                    }
                     box.copyWithRect(RectF(mapped.left, mapped.top, mapped.right, mapped.bottom))
+                        .copy(contentBounds = mappedBounds)
                 }
                 updateOverlayView(pageBinding, currentLetterboxResult?.letterboxRegions ?: emptyList())
             } catch (e: Exception) {
@@ -815,6 +822,11 @@ class EditorActivity : AppCompatActivity() {
         }
 
         val overwriteOriginal = binding.saveOptionGroup.checkedButtonId == R.id.btnOverwrite
+        val previewBitmap = currentBitmap ?: return
+        val previewWidth = previewBitmap.width
+        val previewHeight = previewBitmap.height
+        val cropBounds = viewHolder.getBinding().cropOverlayView.getAvailableCropBounds(selectedBox) ?: return
+        val maxAspectNumerator = settingsManager.getCropAspectNumerator()
 
         lifecycleScope.launch {
             isProcessing = true
@@ -837,18 +849,8 @@ class EditorActivity : AppCompatActivity() {
                 val tempFile = imageProcessor.getTempFile(fileName)
 
                 // 裁剪并保存（传递预览图片尺寸用于坐标缩放）
-                val previewBitmap = currentBitmap
-                val success = if (previewBitmap != null) {
-                    imageProcessor.cropAndSave(
-                        uri,
-                        selectedBox.rect,
-                        tempFile,
-                        previewBitmap.width,
-                        previewBitmap.height
-                    )
-                } else {
-                    imageProcessor.cropAndSave(uri, selectedBox.rect, tempFile)
-                }
+                val success = imageProcessor.cropAndSave(uri, selectedBox.rect, tempFile,
+                    previewWidth, previewHeight, maxAspectNumerator, cropBounds)
 
                 if (success) {
                     when (val saveResult = repository.saveCroppedImage(uri, tempFile, overwriteOriginal)) {

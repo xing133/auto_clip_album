@@ -17,6 +17,7 @@ import androidx.core.content.ContextCompat
 import com.autocrop.album.R
 import com.autocrop.album.data.models.CropBox
 import com.autocrop.album.domain.CropCalculator
+import com.autocrop.album.data.SettingsManager
 import com.autocrop.album.domain.SegmentationRegions
 import kotlin.math.sqrt
 
@@ -50,6 +51,7 @@ class CropOverlayView @JvmOverloads constructor(
     private var imageScale: Float = 1f
 
     private val viewport = ImageViewport()
+    private val settingsManager = SettingsManager.getInstance(context)
     var externalMaskEditing = false
         set(value) { field = value; touchMode = TouchMode.NONE; invalidate() }
     fun panImageBy(dx: Float, dy: Float) { viewport.pan(dx, dy); applyViewport() }
@@ -253,15 +255,21 @@ class CropOverlayView @JvmOverloads constructor(
 
     var interactionEnabled = true
 
+    /** The same limits are used for drawing, interaction and full-resolution export. */
+    fun getAvailableCropBounds(box: CropBox): RectF? {
+        val available = getVisibleImageRect()
+        if (box.contentBounds?.let { !available.intersect(it) } == true || available.isEmpty) return null
+        return available
+    }
+
     private fun visibleCropRect(box: CropBox): RectF {
         if (imageWidth <= 0 || imageHeight <= 0) return RectF(box.rect)
         val rect = box.rect
-        val available = getVisibleImageRect()
-        if (box.contentBounds?.let { !available.intersect(it) } == true) return RectF()
+        val available = getAvailableCropBounds(box) ?: return RectF()
         val region = ImageViewport.Region(available.left, available.top, available.right, available.bottom).constrain(
             ImageViewport.Region(rect.left, rect.top, rect.right, rect.bottom))
         return CropCalculator.constrainCropAspect(
-            RectF(region.left, region.top, region.right, region.bottom), available)
+            RectF(region.left, region.top, region.right, region.bottom), available, settingsManager.getCropAspectNumerator())
     }
 
     /**
@@ -510,7 +518,8 @@ class CropOverlayView @JvmOverloads constructor(
                         selectedCropBox!!,
                         newRect,
                         imageWidth,
-                        imageHeight
+                        imageHeight,
+                        settingsManager.getCropAspectNumerator()
                     )
 
                     val index = cropBoxes.indexOf(selectedCropBox)

@@ -10,6 +10,7 @@ import android.net.Uri
 import androidx.exifinterface.media.ExifInterface
 import com.bumptech.glide.Glide
 import com.bumptech.glide.request.FutureTarget
+import com.autocrop.album.data.SettingsManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -213,13 +214,20 @@ class ImageProcessor(private val context: Context) {
      * @param cropRect 裁剪区域（像素坐标）
      * @return 裁剪后的 Bitmap
      */
-    suspend fun cropBitmap(bitmap: Bitmap, cropRect: RectF): Bitmap? = withContext(Dispatchers.Default) {
+    suspend fun cropBitmap(bitmap: Bitmap, cropRect: RectF,
+                           maxAspectNumerator: Int = SettingsManager.getInstance(context).getCropAspectNumerator(),
+                           bounds: RectF = RectF(0f, 0f, bitmap.width.toFloat(), bitmap.height.toFloat())): Bitmap? = withContext(Dispatchers.Default) {
         try {
-            // 确保裁剪区域在图片范围内
-            val left = cropRect.left.toInt().coerceIn(0, bitmap.width)
-            val top = cropRect.top.toInt().coerceIn(0, bitmap.height)
-            val right = cropRect.right.toInt().coerceIn(0, bitmap.width)
-            val bottom = cropRect.bottom.toInt().coerceIn(0, bitmap.height)
+            val available = RectF(bounds)
+            if (!available.intersect(0f, 0f, bitmap.width.toFloat(), bitmap.height.toFloat())) return@withContext null
+            val pixels = CropAspectRatio.fitPixels(
+                CropAspectRatio.Box(cropRect.left, cropRect.top, cropRect.right, cropRect.bottom),
+                CropAspectRatio.Box(available.left, available.top, available.right, available.bottom),
+                maxAspectNumerator) ?: return@withContext null
+            val left = pixels.left
+            val top = pixels.top
+            val right = pixels.right
+            val bottom = pixels.bottom
 
             val width = right - left
             val height = bottom - top
@@ -286,7 +294,9 @@ class ImageProcessor(private val context: Context) {
         cropRect: RectF,
         targetFile: File,
         previewWidth: Int = 0,
-        previewHeight: Int = 0
+        previewHeight: Int = 0,
+        maxAspectNumerator: Int = SettingsManager.getInstance(context).getCropAspectNumerator(),
+        cropBounds: RectF? = null
     ): Boolean = withContext(Dispatchers.IO) {
         try {
             // 加载原图（不限制尺寸，保持黑边以确保和预览图坐标系一致）
@@ -297,40 +307,27 @@ class ImageProcessor(private val context: Context) {
             android.util.Log.d("ImageProcessor", "cropAndSave: cropRect before scale=$cropRect")
 
             // 如果提供了预览尺寸，需要将裁剪坐标按比例放大到原图
-            val actualCropRect = if (previewWidth > 0 && previewHeight > 0) {
-                val scaleX = bitmap.width.toFloat() / previewWidth
-                val scaleY = bitmap.height.toFloat() / previewHeight
-                android.util.Log.d("ImageProcessor", "cropAndSave: scale factors: scaleX=$scaleX, scaleY=$scaleY")
-                RectF(
-                    cropRect.left * scaleX,
-                    cropRect.top * scaleY,
-                    cropRect.right * scaleX,
-                    cropRect.bottom * scaleY
-                )
-            } else {
-                cropRect
+            val scaleX = if (previewWidth > 0) bitmap.width.toFloat() / previewWidth else 1f
+            val scaleY = if (previewHeight > 0) bitmap.height.toFloat() / previewHeight else 1f
+            fun toOriginal(rect: RectF) = RectF(rect.left * scaleX, rect.top * scaleY,
+                rect.right * scaleX, rect.bottom * scaleY)
+            val actualCropRect = toOriginal(cropRect)
+            val actualBounds = cropBounds?.let { toOriginal(it) }
+                ?: RectF(0f, 0f, bitmap.width.toFloat(), bitmap.height.toFloat())
+
+            try {
+                android.util.Log.d("ImageProcessor", "cropAndSave: actualCropRect=$actualCropRect")
+                val croppedBitmap = cropBitmap(bitmap, actualCropRect, maxAspectNumerator, actualBounds) ?: return@withContext false
+                try {
+                    val saved = saveBitmap(croppedBitmap, targetFile)
+                    if (saved) copyExifData(sourceUri, targetFile)
+                    saved
+                } finally {
+                    if (croppedBitmap != bitmap) croppedBitmap.recycle()
+                }
+            } finally {
+                bitmap.recycle()
             }
-
-            android.util.Log.d("ImageProcessor", "cropAndSave: actualCropRect=$actualCropRect")
-
-            // 裁剪
-            val croppedBitmap = cropBitmap(bitmap, actualCropRect) ?: return@withContext false
-
-            // 保存
-            val saved = saveBitmap(croppedBitmap, targetFile)
-
-            // 复制 EXIF 信息
-            if (saved) {
-                copyExifData(sourceUri, targetFile)
-            }
-
-            // 释放资源
-            if (croppedBitmap != bitmap) {
-                croppedBitmap.recycle()
-            }
-            bitmap.recycle()
-
-            saved
         } catch (e: Exception) {
             e.printStackTrace()
             false
